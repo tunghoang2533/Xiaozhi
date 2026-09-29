@@ -71,7 +71,7 @@ flowchart TD
 | **ESP32-S3 (Bo tím)** | Bo điều khiển trung tâm (Master) | Trên mặt bàn | Dual Core 240MHz, 16MB Flash, 8MB PSRAM, Mic + Loa I2S onboard |
 | **NodeMCU ESP8266** | Bo điều khiển ngoại vi (Slave) | Dưới gầm bàn | 80MHz, WiFi 2.4GHz, tích hợp giao thức ESP-NOW |
 | **HLK-LD2410** | Cảm biến radar hiện diện mmWave | Hướng vào vị trí ghế ngồi | Tần số 24GHz, phát hiện người tĩnh/động, cự ly 0.5m - 5m |
-| **Module Relay 1 kênh** | Đóng ngắt đèn | Trong hộp kỹ thuật gầm bàn | Tải 10A/250VAC, cách ly quang (Optocoupler) |
+| **Module Relay 2 kênh** | Đóng ngắt đèn | Trong hộp kỹ thuật gầm bàn | Tải 10A/250VAC, cách ly quang (Dùng kênh 1, kênh 2 dự phòng) |
 | **Màn hình LCD (Dự kiến)** | Hiển thị thời gian & trạng thái | Gắn cùng bo S3 | ST7789 (240x240) hoặc GC9A01 (tròn 240x240) qua SPI |
 
 ### 3.2. Sơ đồ đấu nối bo phụ ESP8266
@@ -81,9 +81,10 @@ flowchart TD
 | **LD2410 - VCC** | **VIN (hoặc VU)** | Cấp nguồn 5V ổn định cho module radar |
 | **LD2410 - GND** | **GND** | Nối mass chung |
 | **LD2410 - OUT** | **D2 (GPIO4)** | Tín hiệu logic: `HIGH` = Có người, `LOW` = Trống |
-| **Relay - VCC** | **VIN (5V)** | Cấp nguồn cuộn hút relay |
-| **Relay - GND** | **GND** | Nối mass chung |
-| **Relay - IN** | **D1 (GPIO5)** | Tín hiệu kích relay (Mức `LOW` kích đóng tiếp điểm) |
+| **Relay - DC+** | **VIN (5V)** | Cực dương cấp nguồn cuộn hút relay (tương đương VCC) |
+| **Relay - DC-** | **GND** | Cực âm nối mass chung (tương đương GND) |
+| **Relay - IN1** | **D1 (GPIO5)** | Tín hiệu kích Kênh 1 đóng/ngắt đèn (Mức `LOW` kích đóng tiếp điểm) |
+| **Relay - IN2** | *(Bỏ trống)* | Kênh 2 không sử dụng |
 
 ---
 

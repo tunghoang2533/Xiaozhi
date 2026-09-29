@@ -43,9 +43,20 @@ Hệ thống gồm 2 cụm mạch hoạt động độc lập, không dây nối
 | **Cảm biến LD2410** | **VCC** | **VIN (hoặc VU)** | Đỏ | Cấp nguồn **5V** (BẮT BUỘC dùng 5V, không cắm 3V3) |
 | | **GND** | **GND** | Đen | Nối mass chung |
 | | **OUT** | **D2 (GPIO4)** | Vàng / Xanh lá | Tín hiệu phát hiện người (HIGH = có người, LOW = vắng) |
-| **Module Relay** | **VCC** | **VIN (hoặc VU)** | Đỏ | Cấp nguồn 5V cho cuộn hút relay |
-| | **GND** | **GND** | Đen | Nối mass chung |
-| | **IN** | **D1 (GPIO5)** | Xanh dương | Tín hiệu điều khiển đóng ngắt từ ESP8266 |
+| **Module Relay 2 kênh** | **DC+** (tương đương VCC) | **VIN (hoặc VU)** | Đỏ | Cấp nguồn **5V** cho cuộn hút relay |
+| | **DC-** (tương đương GND) | **GND** | Đen | Nối mass chung |
+| | **IN1** | **D1 (GPIO5)** | Xanh dương | Tín hiệu điều khiển đóng ngắt Kênh 1 từ ESP8266 |
+| | **IN2** | *(Bỏ trống)* | - | Kênh 2 dự phòng, không dùng |
+
+> [!NOTE]
+> **GIẢI THÍCH KÝ HIỆU CHÂN MODULE RELAY 2 KÊNH:**
+> - Các module Relay 2 kênh thường in ký hiệu **`DC+`** và **`DC-`** thay vì `VCC` và `GND`:
+>   + **`DC+`**: Cực dương nguồn nuôi (nối 5V từ chân `VIN`/`VU` của NodeMCU).
+>   + **`DC-`**: Cực âm nguồn nuôi (nối mass `GND` của NodeMCU).
+>   + **`IN1` / `IN2`**: Tín hiệu kích cho Kênh 1 và Kênh 2. Ở dự án này chúng ta nối **`IN1`** vào **`D1` (GPIO5)**.
+> - **Jumper kích (H / L Trigger)**:
+>   + Trên mạch có 2 jumper cắm ghi chữ **`H` (High)** và **`L` (Low)** cho từng kênh.
+>   + Bạn hãy **cắm jumper ở vị trí `L` (Low Level Trigger)** vì code mẫu ESP8266 đã cấu hình xuất mức `LOW` để bật đèn (`#define RELAY_ON LOW`).
 
 > [!WARNING]
 > **ĐẶC BIỆT LƯU Ý VỀ NGUỒN CỦA LD2410:**

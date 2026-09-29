@@ -98,22 +98,23 @@ Bo ESP32-S3 tím của bạn đã tích hợp sẵn:
 - **Microphone MEMS I2S** (chuyên dụng thu âm giọng nói).
 - **IC khuếch đại âm thanh + Loa onboard** (đã đấu nối sẵn trên bo, chỉ cần cắm loa vào jack PH2.0).
 
-### 3.1. Đấu nối Màn hình LCD hiển thị (Nếu gắn thêm)
+### 3.1. Đấu nối Màn hình LCD hiển thị 0.96 inch 80x160 (RGB) IPS (ST7735)
 
-Nếu bạn gắn thêm màn hình hiển thị thời gian ngồi làm việc (ST7789 hoặc GC9A01 tròn qua giao tiếp SPI):
+Bo mạch ESP32-S3 tím đã được nạp cấu hình chuẩn cho màn hình **0.96 inch 80x160 (RGB) IPS (ST7735/ST7735S)** qua giao tiếp SPI:
 
-| Chân Màn hình | Chân kết nối ESP32-S3 (Gợi ý) | Chức năng |
+| Chân Màn hình (0.96" IPS) | Chân kết nối ESP32-S3 Tím | Chức năng & Ghi chú |
 | :--- | :--- | :--- |
-| **VCC** | **3V3 (hoặc 5V)** | Nguồn nuôi màn hình |
-| **GND** | **GND** | Mass chung |
-| **SCL / SCK** | **GPIO 12** | Chân xung nhịp SPI Clock |
-| **SDA / MOSI**| **GPIO 11** | Chân truyền dữ liệu SPI Data |
-| **RES / RST** | **GPIO 9** | Chân Reset màn hình |
-| **DC** | **GPIO 8** | Chân chọn Data / Command |
-| **CS** | **GPIO 10** | Chân Chip Select |
-| **BLK / BL** | **GPIO 7 (hoặc 3V3)** | Chân điều khiển đèn nền màn hình (Backlight) |
+| **VCC** | **3V3** | Cấp nguồn 3.3V cho màn hình |
+| **GND** | **GND** | Nối mass chung |
+| **SCL / SCK** | **GPIO 42** | Chân xung nhịp SPI Clock |
+| **SDA / MOSI** | **GPIO 41** | Chân truyền dữ liệu SPI Data |
+| **RES / RST** | **GPIO 44** | Chân Reset màn hình |
+| **DC** | **GPIO 43** | Chân chọn Data / Command |
+| **CS** | **GND** *(hoặc bỏ trống)* | Chân Chip Select (Nối GND nếu module có chân CS, hoặc bỏ trống nếu không có) |
+| **BLK / BL** | **3V3** | Chân bật đèn nền (Nối thẳng 3V3 để màn hình luôn sáng rõ) |
 
-*(Lưu ý: Firmware Xiaozhi cho phép bạn cấu hình lại các chân GPIO này trực tiếp qua giao diện Web Config `192.168.4.1` mà không cần sửa code).*
+> [!NOTE]
+> Cấu hình phần cứng màn hình đã được lưu trực tiếp vào bộ nhớ NVS (`drv=3` - ST7735, độ phân giải `80x160`, offset X=`26`, đảo màu IPS `inv_col=1`, thứ tự màu `rgb_ord=1`). Bạn chỉ cần cắm đúng 6 đến 7 chân như bảng trên là màn hình tự động hiển thị mượt mà với giao diện LVGL.
 
 ---
 

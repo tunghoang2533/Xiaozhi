@@ -4,7 +4,7 @@ import struct
 import zlib
 import subprocess
 
-def update_nvs_lcd(bin_path, drv=3, w=80, h=160, off_x=26, off_y=0, mir_x=1, mir_y=1, swap_xy=0, inv_col=0, rgb_ord=1, spi_mode=0, p_cs=-1):
+def update_nvs_lcd(bin_path, drv=3, w=80, h=160, off_x=26, off_y=0, mir_x=1, mir_y=1, swap_xy=0, inv_col=1, rgb_ord=1, spi_mode=0, p_mosi=41, p_clk=42, p_dc=43, p_rst=44, p_cs=-1, p_bl=-1):
     with open(bin_path, 'rb') as f:
         data = bytearray(f.read())
 
@@ -26,7 +26,12 @@ def update_nvs_lcd(bin_path, drv=3, w=80, h=160, off_x=26, off_y=0, mir_x=1, mir
         'inv_col': inv_col,
         'rgb_ord': rgb_ord,
         'spi_mode': spi_mode,
+        'p_mosi': p_mosi,
+        'p_clk': p_clk,
+        'p_dc': p_dc,
+        'p_rst': p_rst,
         'p_cs': p_cs,
+        'p_bl': p_bl,
     }
 
     entry_idx = 0
@@ -46,8 +51,6 @@ def update_nvs_lcd(bin_path, drv=3, w=80, h=160, off_x=26, off_y=0, mir_x=1, mir
 
         if raw_key in lcd_keys and val_type == 0x14: # int32
             new_val = lcd_keys[raw_key]
-            # Build new entry
-            # Payload = entry[:4] + entry[8:24] + struct.pack('<i', new_val) + entry[28:32]
             key_bytes = entry[8:24]
             desc_without_crc = entry[:4] + key_bytes + struct.pack('<i', new_val) + entry[28:32]
             new_crc = zlib.crc32(desc_without_crc, 0xFFFFFFFF)
@@ -61,11 +64,11 @@ def update_nvs_lcd(bin_path, drv=3, w=80, h=160, off_x=26, off_y=0, mir_x=1, mir
 
     with open(bin_path, 'wb') as f:
         f.write(data)
-    print(f"Updated {updated_count} LCD keys in {bin_path} (drv={drv}, inv_col={inv_col}, off_x={off_x}, off_y={off_y}, spi_mode={spi_mode})")
+    print(f"Updated {updated_count} LCD keys in {bin_path} (drv={drv}, inv={inv_col}, ox={off_x}, oy={off_y}, spi={spi_mode}, mosi={p_mosi}, clk={p_clk}, dc={p_dc}, rst={p_rst})")
 
 def flash_nvs(bin_path, port='COM5'):
     cmd = [sys.executable, '-m', 'esptool', '--port', port, '--baud', '115200', 'write_flash', '0x9000', bin_path]
-    print(f"Flashing NVS via command: {' '.join(cmd)}")
+    print(f"Flashing NVS to {port}...")
     res = subprocess.run(cmd, capture_output=True, text=True)
     print(res.stdout)
     if res.returncode != 0:
@@ -74,12 +77,21 @@ def flash_nvs(bin_path, port='COM5'):
 
 if __name__ == "__main__":
     target_bin = os.path.join(os.path.dirname(__file__), "..", "nvs_configured.bin")
-    inv = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    ox = int(sys.argv[2]) if len(sys.argv) > 2 else 26
-    oy = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-    spi = int(sys.argv[4]) if len(sys.argv) > 4 else 0
-    drv_val = int(sys.argv[5]) if len(sys.argv) > 5 else 3
-    port_arg = sys.argv[6] if len(sys.argv) > 6 else "COM5"
+    
+    # Arguments: drv inv ox oy spi mosi clk dc rst cs bl port
+    drv = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    inv = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    ox = int(sys.argv[3]) if len(sys.argv) > 3 else 26
+    oy = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+    spi = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    mosi = int(sys.argv[6]) if len(sys.argv) > 6 else 41
+    clk = int(sys.argv[7]) if len(sys.argv) > 7 else 42
+    dc = int(sys.argv[8]) if len(sys.argv) > 8 else 43
+    rst = int(sys.argv[9]) if len(sys.argv) > 9 else 44
+    port_arg = "COM5"
+    for arg in sys.argv[1:]:
+        if arg.startswith("COM"):
+            port_arg = arg
 
-    update_nvs_lcd(target_bin, drv=drv_val, off_x=ox, off_y=oy, inv_col=inv, spi_mode=spi)
+    update_nvs_lcd(target_bin, drv=drv, off_x=ox, off_y=oy, inv_col=inv, spi_mode=spi, p_mosi=mosi, p_clk=clk, p_dc=dc, p_rst=rst)
     flash_nvs(target_bin, port_arg)

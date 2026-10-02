@@ -14,7 +14,7 @@ class TestSetLcdConfig(unittest.TestCase):
             backup = f.read()
 
         try:
-            update_nvs_lcd(bin_path, drv=3, off_x=25, off_y=1, inv_col=0, spi_mode=0)
+            update_nvs_lcd(bin_path, drv=3, off_x=26, off_y=0, inv_col=1, spi_mode=3, p_mosi=41, p_clk=42)
 
             with open(bin_path, 'rb') as f:
                 data = f.read()
@@ -41,10 +41,12 @@ class TestSetLcdConfig(unittest.TestCase):
                 entry_idx += entry[2]
 
             self.assertEqual(found_keys.get('drv'), 3)
-            self.assertEqual(found_keys.get('off_x'), 25)
-            self.assertEqual(found_keys.get('off_y'), 1)
-            self.assertEqual(found_keys.get('inv_col'), 0)
-            self.assertEqual(found_keys.get('spi_mode'), 0)
+            self.assertEqual(found_keys.get('off_x'), 26)
+            self.assertEqual(found_keys.get('off_y'), 0)
+            self.assertEqual(found_keys.get('inv_col'), 1)
+            self.assertEqual(found_keys.get('spi_mode'), 3)
+            self.assertEqual(found_keys.get('p_mosi'), 41)
+            self.assertEqual(found_keys.get('p_clk'), 42)
 
         finally:
             with open(bin_path, 'wb') as f:

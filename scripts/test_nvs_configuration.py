@@ -28,7 +28,7 @@ class TestNVSConfiguration(unittest.TestCase):
             'swap_xy': 0,
             'inv_col': 1,
             'rgb_ord': 1,
-            'spi_mode': 0,
+            'spi_mode': 3,
             'p_mosi': 41,
             'p_clk': 42,
             'p_dc': 43,

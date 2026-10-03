@@ -4,7 +4,10 @@ import struct
 import zlib
 import subprocess
 
-def set_nvs_p_lamp(bin_path, p_lamp_gpio=15):
+def set_nvs_p_lamp(bin_path, p_lamp_gpio=-1):
+    # Note: On ESP32-S3 Tim, GPIO 15 is used by I2S Speaker BCLK (spk_bclk).
+    # Setting p_lamp=15 causes conflict with speaker audio output.
+
     with open(bin_path, 'rb') as f:
         data = bytearray(f.read())
 

@@ -74,15 +74,18 @@ void setup() {
     setRelay(false); // Default OFF
 
     WiFi.mode(WIFI_STA);
+    wifi_promiscuous_enable(1);
+    wifi_set_channel(9);
+    wifi_promiscuous_enable(0);
     WiFi.disconnect();
 
     if (esp_now_init() != 0) {
         Serial.println("[ESP-NOW] Init Failed!");
     } else {
-        Serial.println("[ESP-NOW] Init Success!");
+        Serial.println("[ESP-NOW] Init Success on Channel 9!");
         esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
         esp_now_register_recv_cb(onDataRecv);
-        esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+        esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_COMBO, 9, NULL, 0);
     }
 }
 

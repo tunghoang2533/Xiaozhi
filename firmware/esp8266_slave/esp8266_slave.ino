@@ -6,9 +6,9 @@
 
 // Relay Polarity:
 // true  = Active LOW (Standard for 2-channel optocoupler relay module with Jumper at 'L')
-// false = Active HIGH (Standard for 1-channel transistor relay module)
+// false = Active HIGH (Standard for 1-channel transistor relay module / Jumper at 'H')
 // Can be toggled at runtime via Serial command 'P'
-bool relayActiveLow = true;
+bool relayActiveLow = false;
 
 #define AUTO_OFF_TIMEOUT_MS 15000 // 15 seconds timeout for demo (30s in production)
 

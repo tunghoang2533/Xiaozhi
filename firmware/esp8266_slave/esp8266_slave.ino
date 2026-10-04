@@ -1,14 +1,31 @@
 #include <ESP8266WiFi.h>
 #include <espnow.h>
+#include <EEPROM.h>
 
 #define RADAR_PIN   D2 // GPIO4 - LD2410 OUT pin
 #define RELAY_PIN   D1 // GPIO5 - Relay IN1 pin
 
+#define EEPROM_MAGIC 0x55
+
 // Relay Polarity:
 // true  = Active LOW (Standard for 2-channel optocoupler relay module with Jumper at 'L')
 // false = Active HIGH (Standard for 1-channel transistor relay module / Jumper at 'H')
-// Can be toggled at runtime via Serial command 'P'
-bool relayActiveLow = false;
+// Can be toggled at runtime via Serial command 'P' and saved to EEPROM
+bool relayActiveLow = true;
+
+// Radar Logic:
+// true  = Active HIGH (HLK-LD2410 default: 3.3V/HIGH = person detected, 0V/LOW = unoccupied)
+// false = Active LOW (Inverted: LOW = person detected, HIGH = unoccupied)
+// Can be toggled at runtime via Serial command 'R' and saved to EEPROM
+bool radarActiveHigh = true;
+
+void saveSettings() {
+    EEPROM.write(0, EEPROM_MAGIC);
+    EEPROM.write(1, relayActiveLow ? 1 : 0);
+    EEPROM.write(2, radarActiveHigh ? 1 : 0);
+    EEPROM.commit();
+    Serial.println("[CONFIG] Saved settings to EEPROM!");
+}
 
 #define AUTO_OFF_TIMEOUT_MS 15000 // 15 seconds timeout for demo (30s in production)
 
@@ -112,7 +129,24 @@ void setup() {
     Serial.println(" SMART DESK ASSISTANT - ESP8266 SLAVE ");
     Serial.println("==========================================");
 
-    pinMode(RADAR_PIN, INPUT_PULLUP);
+    EEPROM.begin(64);
+    if (EEPROM.read(0) == EEPROM_MAGIC) {
+        relayActiveLow = (EEPROM.read(1) == 1);
+        radarActiveHigh = (EEPROM.read(2) == 1);
+        Serial.printf("[CONFIG] Loaded settings from EEPROM: RelayActiveLow=%s, RadarActiveHigh=%s\n",
+                      relayActiveLow ? "YES (Jumper L)" : "NO (Jumper H)",
+                      radarActiveHigh ? "YES (HIGH=Occupied)" : "NO (LOW=Occupied)");
+    } else {
+        relayActiveLow = true; // Default Active LOW matching Jumper L
+        radarActiveHigh = true; // Default LD2410 Active HIGH
+        EEPROM.write(0, EEPROM_MAGIC);
+        EEPROM.write(1, relayActiveLow ? 1 : 0);
+        EEPROM.write(2, radarActiveHigh ? 1 : 0);
+        EEPROM.commit();
+        Serial.println("[CONFIG] Initialized default settings to EEPROM (RelayActiveLow=YES, RadarActiveHigh=YES)");
+    }
+
+    pinMode(RADAR_PIN, INPUT);
     pinMode(RELAY_PIN, OUTPUT);
     setRelay(false); // Default OFF
 
@@ -178,13 +212,17 @@ void loop() {
 
     // Require stable signal for at least 100ms before changing debounced state
     if (now - rawRadarChangeMs >= 100) {
-        bool newOccupied = (rawRadar == HIGH); // LD2410: HIGH = target detected
+        bool newOccupied = radarActiveHigh ? (rawRadar == HIGH) : (rawRadar == LOW);
         if (newOccupied != debouncedOccupied) {
             debouncedOccupied = newOccupied;
             if (debouncedOccupied) {
-                Serial.println("[RADAR] Phat hien nguoi ngoi vao ban! (D2 = HIGH confirmed)");
+                Serial.printf("[RADAR] Phat hien nguoi ngoi vao ban! (D2=%s, Logic=%s)\n",
+                              rawRadar == HIGH ? "HIGH" : "LOW",
+                              radarActiveHigh ? "Active-HIGH" : "Active-LOW");
             } else {
-                Serial.println("[RADAR] Phat hien roi ban (D2 = LOW confirmed)");
+                Serial.printf("[RADAR] Phat hien roi ban (D2=%s, Logic=%s)\n",
+                              rawRadar == HIGH ? "HIGH" : "LOW",
+                              radarActiveHigh ? "Active-HIGH" : "Active-LOW");
             }
         }
     }
@@ -262,16 +300,34 @@ void loop() {
             if (debouncedOccupied) setRelay(true); else setRelay(false);
         } else if (c == 'p' || c == 'P') {
             relayActiveLow = !relayActiveLow;
-            Serial.printf("[SERIAL] Toggled Relay Polarity: ActiveLow is now %s\n", relayActiveLow ? "TRUE" : "FALSE");
+            saveSettings();
+            Serial.printf("[SERIAL] Toggled Relay Polarity: ActiveLow is now %s (Saved to EEPROM)\n", 
+                          relayActiveLow ? "YES (Jumper L)" : "NO (Jumper H)");
             setRelay(currentLampState); // Re-apply with new polarity
+        } else if (c == 'r' || c == 'R') {
+            radarActiveHigh = !radarActiveHigh;
+            saveSettings();
+            Serial.printf("[SERIAL] Toggled Radar Logic: ActiveHigh is now %s (Saved to EEPROM)\n", 
+                          radarActiveHigh ? "YES (HIGH=Occupied)" : "NO (LOW=Occupied)");
         } else if (c == 's' || c == 'S') {
             const char* modeStr = (currentMode == MODE_AUTO) ? "AUTO" : 
                                   ((currentMode == MODE_MANUAL_OFF) ? "MANUAL_OFF" : "MANUAL_ON");
-            Serial.printf("[DIAG] Mode: %s | Sitting: %d | Lamp: %d | Time: %lus | Radar(D2): %d | Ch: %d | ActiveLow: %s\n",
+            Serial.printf("[DIAG] Mode: %s | Sitting: %d | Lamp: %d | Time: %lus | Radar(D2): %d | Ch: %d | RelayActiveLow: %s | RadarActiveHigh: %s\n",
                           modeStr,
                           currentSittingState ? 1 : 0, currentLampState ? 1 : 0,
                           currentSittingState ? totalSittingSec : 0,
-                          rawRadar, currentChannel, relayActiveLow ? "YES" : "NO");
+                          rawRadar, currentChannel,
+                          relayActiveLow ? "YES (Jumper L)" : "NO (Jumper H)",
+                          radarActiveHigh ? "YES (HIGH=Co nguoi)" : "NO (LOW=Co nguoi)");
+        } else if (c == 'h' || c == 'H' || c == '?') {
+            Serial.println("\n--- LENH DIEU KHIEN & HIEU CHINH ESP8266 ---");
+            Serial.println(" '0' : Ep TAT den (Uu tien hon cam bien)");
+            Serial.println(" '1' : Ep BAT den (Uu tien hon cam bien)");
+            Serial.println(" 'a' : Chuyen ve che do TU DONG (AUTO)");
+            Serial.println(" 'p' : Dao cuc Relay (Active-LOW <-> Active-HIGH) & Luu EEPROM");
+            Serial.println(" 'r' : Dao cuc Radar (Active-HIGH <-> Active-LOW) & Luu EEPROM");
+            Serial.println(" 's' : Xem chan doan trang thai chi tiet (Diagnostics)");
+            Serial.println("----------------------------------------------\n");
         }
     }
 

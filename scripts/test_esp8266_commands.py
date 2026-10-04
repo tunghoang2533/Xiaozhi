@@ -115,9 +115,51 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
         assert auto_success, "Failed: AUTO mode reset not confirmed"
         print("[PASSED] AUTO mode successfully restored!")
 
-        print("\n=======================================================")
-        print(" ALL ESP8266 SLAVE COMMAND PRIORITY TESTS PASSED!")
-        print("=======================================================")
+        # Step 5: Send 'p' (Toggle Relay Polarity)
+        print("\n--> [TEST 5] Testing 'p' Command (Toggle Relay Polarity & EEPROM)...")
+        ser.write(b'p\n')
+        ser.flush()
+        time.sleep(1)
+        lines = []
+        t0 = time.time()
+        while time.time() - t0 < 2:
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
+            if l:
+                print(f"[RECV] {l}")
+                lines.append(l)
+        assert any("Toggled Relay Polarity" in l for l in lines), "Failed: Relay polarity toggle not confirmed"
+        print("[PASSED] Relay polarity toggle and EEPROM save verified!")
+
+        # Toggle back to ensure it remains Active-LOW (matching Jumper L)
+        ser.write(b'p\n')
+        ser.flush()
+        time.sleep(1)
+
+        # Step 6: Send 'r' (Toggle Radar Logic)
+        print("\n--> [TEST 6] Testing 'r' Command (Toggle Radar Logic & EEPROM)...")
+        ser.write(b'r\n')
+        ser.flush()
+        time.sleep(1)
+        lines = []
+        t0 = time.time()
+        while time.time() - t0 < 2:
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
+            if l:
+                print(f"[RECV] {l}")
+                lines.append(l)
+        assert any("Toggled Radar Logic" in l for l in lines), "Failed: Radar logic toggle not confirmed"
+        print("[PASSED] Radar logic toggle and EEPROM save verified!")
+
+        # Toggle 'r' once more to return to configured state and reset to AUTO
+        ser.write(b'a\n')
+        ser.flush()
+        time.sleep(0.5)
+
+        print("\n===================================================================")
+        print(" ALL ESP8266 SLAVE COMMAND, PRIORITY & EEPROM CALIBRATION PASSED!")
+        print("===================================================================")
         return True
 
     finally:

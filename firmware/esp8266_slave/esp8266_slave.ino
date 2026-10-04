@@ -11,7 +11,7 @@
 // true  = Active LOW (Standard for 2-channel optocoupler relay module with Jumper at 'L')
 // false = Active HIGH (Standard for 1-channel transistor relay module / Jumper at 'H')
 // Can be toggled at runtime via Serial command 'P' and saved to EEPROM
-bool relayActiveLow = true;
+bool relayActiveLow = false;
 
 // Radar Logic:
 // true  = Active HIGH (HLK-LD2410 default: 3.3V/HIGH = person detected, 0V/LOW = unoccupied)
@@ -137,13 +137,13 @@ void setup() {
                       relayActiveLow ? "YES (Jumper L)" : "NO (Jumper H)",
                       radarActiveHigh ? "YES (HIGH=Occupied)" : "NO (LOW=Occupied)");
     } else {
-        relayActiveLow = true; // Default Active LOW matching Jumper L
+        relayActiveLow = false; // Default Active HIGH matching user's relay hardware (HIGH = ON, LOW = OFF)
         radarActiveHigh = true; // Default LD2410 Active HIGH
         EEPROM.write(0, EEPROM_MAGIC);
         EEPROM.write(1, relayActiveLow ? 1 : 0);
         EEPROM.write(2, radarActiveHigh ? 1 : 0);
         EEPROM.commit();
-        Serial.println("[CONFIG] Initialized default settings to EEPROM (RelayActiveLow=YES, RadarActiveHigh=YES)");
+        Serial.println("[CONFIG] Initialized default settings to EEPROM (RelayActiveLow=NO, RadarActiveHigh=YES)");
     }
 
     pinMode(RADAR_PIN, INPUT);

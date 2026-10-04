@@ -580,20 +580,51 @@ void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* to
         std::expected<void, std::string> validation;
         if (cJSON_IsObject(tool_arguments)) {
             auto value = cJSON_GetObjectItem(tool_arguments, argument.name().c_str());
-            if (argument.type() == kPropertyTypeBoolean && cJSON_IsBool(value)) {
-                validation = argument.set_value<bool>(value->valueint == 1);
-                found = true;
-            } else if (argument.type() == kPropertyTypeInteger && cJSON_IsNumber(value)) {
-                validation = argument.set_value<int>(value->valueint);
-                found = true;
-            } else if (argument.type() == kPropertyTypeString && cJSON_IsString(value)) {
-                validation = argument.set_value<std::string>(value->valuestring);
-                found = true;
-            } else if (value != nullptr) {
-                ESP_LOGE(TAG, "tools/call: Invalid type for argument: %s", argument.name().c_str());
-                ReplyError(id, -32602, "Invalid type for argument: " + argument.name(),
-                           response_sender);
-                return;
+            if (value != nullptr) {
+                if (argument.type() == kPropertyTypeBoolean) {
+                    if (cJSON_IsBool(value)) {
+                        validation = argument.set_value<bool>(value->valueint == 1);
+                        found = true;
+                    } else if (cJSON_IsNumber(value)) {
+                        validation = argument.set_value<bool>(value->valueint != 0);
+                        found = true;
+                    } else if (cJSON_IsString(value)) {
+                        std::string s = value->valuestring;
+                        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+                        bool b = (s == "true" || s == "1" || s == "on");
+                        validation = argument.set_value<bool>(b);
+                        found = true;
+                    }
+                } else if (argument.type() == kPropertyTypeInteger) {
+                    if (cJSON_IsNumber(value)) {
+                        validation = argument.set_value<int>(value->valueint);
+                        found = true;
+                    } else if (cJSON_IsBool(value)) {
+                        validation = argument.set_value<int>(value->valueint == 1 ? 1 : 0);
+                        found = true;
+                    } else if (cJSON_IsString(value)) {
+                        validation = argument.set_value<int>(std::atoi(value->valuestring));
+                        found = true;
+                    }
+                } else if (argument.type() == kPropertyTypeString) {
+                    if (cJSON_IsString(value)) {
+                        validation = argument.set_value<std::string>(value->valuestring);
+                        found = true;
+                    } else if (cJSON_IsNumber(value)) {
+                        validation = argument.set_value<std::string>(std::to_string(value->valueint));
+                        found = true;
+                    } else if (cJSON_IsBool(value)) {
+                        validation = argument.set_value<std::string>(value->valueint == 1 ? "true" : "false");
+                        found = true;
+                    }
+                }
+
+                if (!found) {
+                    ESP_LOGE(TAG, "tools/call: Invalid type for argument: %s", argument.name().c_str());
+                    ReplyError(id, -32602, "Invalid type for argument: " + argument.name(),
+                               response_sender);
+                    return;
+                }
             }
         }
 

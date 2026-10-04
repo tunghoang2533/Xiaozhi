@@ -25,18 +25,33 @@ class TestXiaozhiEspNowBuild(unittest.TestCase):
         self.assertIn("uint8_t magic; // 0x5A", content)
         self.assertIn("uint8_t cmd;", content)
 
-        # Check ESP-NOW APIs
+        # Check ESP-NOW APIs & Burst Transmission
         self.assertIn("esp_now_init()", content)
         self.assertIn("esp_now_send(", content)
         self.assertIn("esp_now_add_peer(", content)
-        self.assertIn("esp_wifi_get_channel(", content)
+        self.assertIn("WIFI_PS_NONE", content)
+        self.assertIn("burst %d/6", content)
 
         # Check MCP Tools
         self.assertIn("self.lamp.turn_on", content)
         self.assertIn("self.lamp.turn_off", content)
         self.assertIn("self.lamp.set_auto", content)
+        self.assertIn("self.light.turn_on", content)
+        self.assertIn("self.light.turn_off", content)
         self.assertIn("self.c3.switch", content)
         self.assertIn("self.relay.control", content)
+
+    def test_mcp_server_type_coercion(self):
+        mcp_server_path = os.path.join(
+            self.repo_dir, "xiaozhi-esp32-main", "main", "mcp_server.cc"
+        )
+        self.assertTrue(os.path.exists(mcp_server_path), "mcp_server.cc must exist")
+        with open(mcp_server_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("kPropertyTypeBoolean", content)
+        self.assertIn("kPropertyTypeInteger", content)
+        self.assertIn("kPropertyTypeString", content)
+        self.assertIn("std::atoi(value->valuestring)", content)
 
     def test_board_pinout_and_lcd_config(self):
         self.assertTrue(os.path.exists(self.board_config_path), "config.h must exist")

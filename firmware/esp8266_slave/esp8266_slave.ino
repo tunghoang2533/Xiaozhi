@@ -179,27 +179,30 @@ void setup() {
 
     // Connect to WiFi if matched to associate with AP and lock channel
     if (matchedIdx >= 0) {
-        Serial.printf("[WIFI] Connecting to '%s' to lock channel %d...\n", KNOWN_SSIDS[matchedIdx], targetChannel);
+        Serial.printf("[WIFI] Connecting to '%s' on Channel %d (Timeout: 10s)...\n", KNOWN_SSIDS[matchedIdx], targetChannel);
+        WiFi.persistent(false);
+        WiFi.setAutoConnect(false);
+        WiFi.setAutoReconnect(true);
         WiFi.begin(KNOWN_SSIDS[matchedIdx], KNOWN_PASSWORDS[matchedIdx]);
         unsigned long startConnect = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - startConnect < 4000) {
-            delay(100);
+        while (WiFi.status() != WL_CONNECTED && millis() - startConnect < 10000) {
+            delay(250);
+            Serial.print(".");
         }
+        Serial.println();
         if (WiFi.status() == WL_CONNECTED) {
             currentChannel = WiFi.channel();
             Serial.printf("[WIFI] Connected successfully! IP: %s | Locked Channel: %d\n", 
                           WiFi.localIP().toString().c_str(), currentChannel);
         } else {
-            Serial.printf("[WIFI] Quick connect timeout, locking channel %d manually via Promiscuous mode\n", targetChannel);
+            Serial.printf("[WIFI] Connect timeout, locking channel %d manually via Promiscuous mode\n", targetChannel);
             wifi_promiscuous_enable(1);
             wifi_set_channel(targetChannel);
-            wifi_promiscuous_enable(0);
         }
     } else {
         Serial.printf("[WIFI] Locking channel %d manually via Promiscuous mode\n", targetChannel);
         wifi_promiscuous_enable(1);
         wifi_set_channel(targetChannel);
-        wifi_promiscuous_enable(0);
     }
 
     // Disable WiFi sleep to guarantee 100% active listening

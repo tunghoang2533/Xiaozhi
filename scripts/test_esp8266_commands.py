@@ -152,7 +152,12 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
         assert any("Toggled Radar Logic" in l for l in lines), "Failed: Radar logic toggle not confirmed"
         print("[PASSED] Radar logic toggle and EEPROM save verified!")
 
-        # Toggle 'r' once more to return to configured state and reset to AUTO
+        # Toggle 'r' once more to return to Active-HIGH state (matching LD2410)
+        ser.write(b'r\n')
+        ser.flush()
+        time.sleep(1)
+
+        # Reset to AUTO mode
         ser.write(b'a\n')
         ser.flush()
         time.sleep(0.5)

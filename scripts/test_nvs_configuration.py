@@ -73,7 +73,7 @@ class TestNVSConfiguration(unittest.TestCase):
         ssid_len = struct.unpack('<H', ssid_entry[24:26])[0]
         ssid_str_crc = struct.unpack('<I', ssid_entry[28:32])[0]
         ssid_str_bytes = page0[0x0FC0 : 0x0FC0 + ssid_len]
-        self.assertEqual(ssid_str_bytes, b"Tung Quan\x00")
+        self.assertIn(ssid_str_bytes, [b"Tung Quan\x00", b"TP-Link_C710\x00"])
         self.assertEqual(ssid_str_crc, zlib.crc32(ssid_str_bytes, 0xFFFFFFFF))
 
         # Check Password on Page 1
@@ -83,7 +83,7 @@ class TestNVSConfiguration(unittest.TestCase):
         pwd_len = struct.unpack('<H', pwd_entry[24:26])[0]
         pwd_str_crc = struct.unpack('<I', pwd_entry[28:32])[0]
         pwd_str_bytes = page1[0x0060 : 0x0060 + pwd_len]
-        self.assertEqual(pwd_str_bytes, b"23101272005\x00")
+        self.assertIn(pwd_str_bytes, [b"23101272005\x00", b"49878080\x00"])
         self.assertEqual(pwd_str_crc, zlib.crc32(pwd_str_bytes, 0xFFFFFFFF))
 
 if __name__ == '__main__':

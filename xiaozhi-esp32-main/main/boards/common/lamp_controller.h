@@ -45,9 +45,14 @@ private:
 
     void SendEspNowCommand(uint8_t cmd) {
         InitEspNow();
+        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
         DeskCommandPacket pkt = {0x5A, cmd};
-        esp_err_t err = esp_now_send(broadcast_mac_, (uint8_t*)&pkt, sizeof(pkt));
-        ESP_LOGI(TAG_LAMP, "Sent ESP-NOW command: %d (%s), err=%d", cmd, cmd == 1 ? "ON" : "OFF", (int)err);
+        for (int i = 0; i < 4; i++) {
+            esp_err_t err = esp_now_send(broadcast_mac_, (uint8_t*)&pkt, sizeof(pkt));
+            ESP_LOGI(TAG_LAMP, "Sent ESP-NOW command: %d (%s) burst %d/4, err=%d", 
+                     cmd, cmd == 1 ? "ON" : (cmd == 0 ? "OFF" : "AUTO"), i + 1, (int)err);
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 
 public:
@@ -71,7 +76,7 @@ public:
             return power_ ? "{\"power\": true}" : "{\"power\": false}";
         });
 
-        mcp_server.AddTool("self.lamp.turn_on", "Turn on the lamp", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
+        mcp_server.AddTool("self.lamp.turn_on", "Turn on the lamp / Bat den ban / Bat den / Bat thiet bi", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
             power_ = true;
             if (gpio_num_ != GPIO_NUM_NC) {
                 gpio_set_level(gpio_num_, 1);
@@ -80,12 +85,17 @@ public:
             return true;
         });
 
-        mcp_server.AddTool("self.lamp.turn_off", "Turn off the lamp", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
+        mcp_server.AddTool("self.lamp.turn_off", "Turn off the lamp / Tat den ban / Tat den / Tat thiet bi", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
             power_ = false;
             if (gpio_num_ != GPIO_NUM_NC) {
                 gpio_set_level(gpio_num_, 0);
             }
             SendEspNowCommand(0);
+            return true;
+        });
+
+        mcp_server.AddTool("self.lamp.set_auto", "Chuyen den ban ve che do tu dong theo cam bien radar / Reset auto mode", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
+            SendEspNowCommand(2);
             return true;
         });
 

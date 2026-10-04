@@ -34,6 +34,7 @@ class TestXiaozhiEspNowBuild(unittest.TestCase):
         # Check MCP Tools
         self.assertIn("self.lamp.turn_on", content)
         self.assertIn("self.lamp.turn_off", content)
+        self.assertIn("self.lamp.set_auto", content)
         self.assertIn("self.c3.switch", content)
         self.assertIn("self.relay.control", content)
 

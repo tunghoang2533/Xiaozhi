@@ -24,22 +24,42 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
     ser.reset_input_buffer()
 
     try:
-        # Step 1: Send '0' (Turn OFF)
-        print("\n--> [TEST 1] Sending Command '0' (Turn OFF)...")
+        # Step 1: Send '0' (Turn OFF - Command Priority over Sensor)
+        print("\n--> [TEST 1] Sending Command '0' (Turn OFF with Command Priority)...")
         ser.write(b'0\n')
         ser.flush()
         time.sleep(1)
         lines = []
         t0 = time.time()
-        while time.time() - t0 < 2:
-            l = ser.readline().decode('ascii', errors='ignore').strip()
+        while time.time() - t0 < 3:
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
             if l:
                 print(f"[RECV] {l}")
                 lines.append(l)
 
-        off_success = any("OFF" in l for l in lines)
+        off_success = any("OFF" in l or "Tat" in l for l in lines)
         assert off_success, "Failed: Lamp should report OFF state"
         print("[PASSED] Command '0' successfully turned OFF lamp!")
+
+        # Step 1b: Verify command priority - lamp must STAY OFF even while radar detects person
+        print("\n--> [TEST 1B] Verifying Command Priority: Lamp MUST STAY OFF despite radar...")
+        time.sleep(2)
+        lines_priority = []
+        t0 = time.time()
+        while time.time() - t0 < 3:
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
+            if l:
+                print(f"[RECV] {l}")
+                lines_priority.append(l)
+
+        # Check status packets: lamp_state must remain 0
+        status_lines = [l for l in lines_priority if "[STATUS]" in l]
+        assert len(status_lines) > 0, "Failed: Should receive [STATUS] reports"
+        for st in status_lines:
+            assert "Lamp: 0" in st, f"Failed: Lamp turned back ON during MANUAL_OFF: {st}"
+        print("[PASSED] Priority Verified: Lamp stayed strictly OFF despite radar sensor!")
 
         # Step 2: Send '1' (Turn ON)
         print("\n--> [TEST 2] Sending Command '1' (Turn ON)...")
@@ -49,12 +69,13 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
         lines = []
         t0 = time.time()
         while time.time() - t0 < 2:
-            l = ser.readline().decode('ascii', errors='ignore').strip()
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
             if l:
                 print(f"[RECV] {l}")
                 lines.append(l)
 
-        on_success = any("ON" in l for l in lines)
+        on_success = any("ON" in l or "Sang" in l for l in lines)
         assert on_success, "Failed: Lamp should report ON state"
         print("[PASSED] Command '1' successfully turned ON lamp!")
 
@@ -66,7 +87,8 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
         lines = []
         t0 = time.time()
         while time.time() - t0 < 2:
-            l = ser.readline().decode('ascii', errors='ignore').strip()
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
             if l:
                 print(f"[RECV] {l}")
                 lines.append(l)
@@ -83,7 +105,8 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
         lines = []
         t0 = time.time()
         while time.time() - t0 < 2:
-            l = ser.readline().decode('ascii', errors='ignore').strip()
+            raw = ser.readline()
+            l = raw.decode('utf-8', errors='ignore').strip()
             if l:
                 print(f"[RECV] {l}")
                 lines.append(l)
@@ -92,9 +115,9 @@ def test_esp8266_commands(port='COM8', baudrate=115200):
         assert auto_success, "Failed: AUTO mode reset not confirmed"
         print("[PASSED] AUTO mode successfully restored!")
 
-        print("\n==========================================")
-        print(" ALL ESP8266 SLAVE HARDWARE TESTS PASSED!")
-        print("==========================================")
+        print("\n=======================================================")
+        print(" ALL ESP8266 SLAVE COMMAND PRIORITY TESTS PASSED!")
+        print("=======================================================")
         return True
 
     finally:

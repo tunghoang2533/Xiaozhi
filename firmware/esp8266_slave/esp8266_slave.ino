@@ -40,12 +40,18 @@ struct __attribute__((packed)) DeskStatusPacket {
     uint32_t sitting_time_sec; // sitting duration in seconds
 };
 
+enum ControlMode {
+    MODE_AUTO = 0,       // Tự động bật/tắt theo cảm biến radar LD2410
+    MODE_MANUAL_OFF = 1, // Ưu tiên ra lệnh TẮT: Đèn luôn TẮT, cảm biến KHÔNG được tự ý bật đèn
+    MODE_MANUAL_ON = 2   // Ưu tiên ra lệnh BẬT: Đèn luôn BẬT, cảm biến KHÔNG được tự ý tắt đèn
+};
+
 // Global variables
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 DeskStatusPacket statusPacket;
 DeskCommandPacket rxPacket;
 
-bool manualOverride = false;
+ControlMode currentMode = MODE_AUTO;
 bool currentLampState = false;
 bool currentSittingState = false;
 unsigned long sittingStartMs = 0;
@@ -77,16 +83,18 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
                           rxPacket.cmd,
                           rxPacket.cmd == 1 ? "FORCE ON" : (rxPacket.cmd == 0 ? "FORCE OFF" : "AUTO"),
                           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-            if (rxPacket.cmd == 1) { // Force On
-                manualOverride = true;
+            if (rxPacket.cmd == 1) { // Lệnh ép bật (Ưu tiên người dùng)
+                currentMode = MODE_MANUAL_ON;
                 setRelay(true);
                 lastOccupiedMs = millis(); // Refresh activity
-            } else if (rxPacket.cmd == 0) { // Force Off
-                manualOverride = true;
+                Serial.println("[MODE] MANUAL_ON: Uu tien bat den, cam bien khong the tat den!");
+            } else if (rxPacket.cmd == 0) { // Lệnh ép tắt (Ưu tiên người dùng)
+                currentMode = MODE_MANUAL_OFF;
                 setRelay(false);
-            } else if (rxPacket.cmd == 2) { // Auto
-                manualOverride = false;
-                Serial.println("[ESP-NOW] Reset to AUTO mode");
+                Serial.println("[MODE] MANUAL_OFF: Uu tien tat den, cam bien khong the tu dong bat den!");
+            } else if (rxPacket.cmd == 2) { // Reset về chế độ Tự động
+                currentMode = MODE_AUTO;
+                Serial.println("[MODE] Reset to AUTO mode: Cam bien radar quan ly den.");
                 if (debouncedOccupied) {
                     setRelay(true);
                 } else {
@@ -191,20 +199,47 @@ void loop() {
         }
         totalSittingSec = (now - sittingStartMs) / 1000;
 
-        // Auto-turn-on lamp if no manual override is active
-        if (!manualOverride && !currentLampState) {
-            setRelay(true);
+        // Xử lý bật/tắt đèn theo độ ưu tiên:
+        if (currentMode == MODE_AUTO) {
+            // Chế độ tự động: Bật đèn khi phát hiện người ngồi vào bàn
+            if (!currentLampState) {
+                setRelay(true);
+            }
+        } else if (currentMode == MODE_MANUAL_OFF) {
+            // ƯU TIÊN LỆNH TẮT HƠN CẢM BIẾN:
+            // Người dùng đã ra lệnh TẮT -> Giữ đèn luôn TẮT, cảm biến radar KHÔNG được tự ý bật đèn!
+            if (currentLampState) {
+                setRelay(false);
+            }
+        } else if (currentMode == MODE_MANUAL_ON) {
+            // ƯU TIÊN LỆNH BẬT:
+            // Người dùng đã ra lệnh BẬT -> Giữ đèn luôn BẬT!
+            if (!currentLampState) {
+                setRelay(true);
+            }
         }
     } else {
-        // Person is away
+        // Cảm biến không thấy người (vắng mặt)
         if (now - lastOccupiedMs >= AUTO_OFF_TIMEOUT_MS) {
-            if (currentSittingState || manualOverride || currentLampState) {
+            if (currentSittingState) {
                 currentSittingState = false;
-                manualOverride = false; // Always clear override when desk is empty for timeout
-                Serial.println("[DESK] Roi ban (het timeout)! Chuyen ve che do tu dong.");
+                Serial.println("[DESK] Nguoi dung da roi ban (het timeout)!");
+            }
+
+            if (currentMode == MODE_AUTO) {
+                // Ở chế độ tự động: Vắng người quá timeout -> Tắt đèn
                 if (currentLampState) {
                     setRelay(false);
                 }
+            }
+        }
+
+        // Hoàn nguyên an toàn sau khi rời bàn rất lâu (5 phút = 300,000 ms vắng mặt liên tục)
+        // Khi người dùng đã rời bàn hẳn và không sử dụng, tự động trả về MODE_AUTO cho phiên sau
+        if (now - lastOccupiedMs >= 300000UL) {
+            if (currentMode != MODE_AUTO) {
+                currentMode = MODE_AUTO;
+                Serial.println("[DESK] Vang mat hon 5 phut, tu dong khoi phuc che do AUTO cho lan sau!");
             }
         }
     }
@@ -214,23 +249,26 @@ void loop() {
         char c = Serial.read();
         if (c == '1') {
             Serial.println("[SERIAL] Manual Command: Turn ON");
-            manualOverride = true;
+            currentMode = MODE_MANUAL_ON;
             setRelay(true);
             lastOccupiedMs = now;
         } else if (c == '0') {
-            Serial.println("[SERIAL] Manual Command: Turn OFF");
-            manualOverride = true;
+            Serial.println("[SERIAL] Manual Command: Turn OFF (Priority over sensor)");
+            currentMode = MODE_MANUAL_OFF;
             setRelay(false);
         } else if (c == 'a' || c == 'A') {
             Serial.println("[SERIAL] Manual Command: Reset AUTO mode");
-            manualOverride = false;
+            currentMode = MODE_AUTO;
             if (debouncedOccupied) setRelay(true); else setRelay(false);
         } else if (c == 'p' || c == 'P') {
             relayActiveLow = !relayActiveLow;
             Serial.printf("[SERIAL] Toggled Relay Polarity: ActiveLow is now %s\n", relayActiveLow ? "TRUE" : "FALSE");
             setRelay(currentLampState); // Re-apply with new polarity
         } else if (c == 's' || c == 'S') {
-            Serial.printf("[DIAG] Sitting: %d | Lamp: %d | Time: %lus | Radar(D2): %d | Ch: %d | ActiveLow: %s\n",
+            const char* modeStr = (currentMode == MODE_AUTO) ? "AUTO" : 
+                                  ((currentMode == MODE_MANUAL_OFF) ? "MANUAL_OFF" : "MANUAL_ON");
+            Serial.printf("[DIAG] Mode: %s | Sitting: %d | Lamp: %d | Time: %lus | Radar(D2): %d | Ch: %d | ActiveLow: %s\n",
+                          modeStr,
                           currentSittingState ? 1 : 0, currentLampState ? 1 : 0,
                           currentSittingState ? totalSittingSec : 0,
                           rawRadar, currentChannel, relayActiveLow ? "YES" : "NO");

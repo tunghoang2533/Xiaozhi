@@ -30,7 +30,13 @@ private:
         }
         esp_now_peer_info_t peer = {};
         memcpy(peer.peer_addr, broadcast_mac_, 6);
-        peer.channel = 0; // 0 = auto-follow STA channel (Channel 10)
+        uint8_t primary_channel = 0;
+        wifi_second_chan_t second_channel;
+        if (esp_wifi_get_channel(&primary_channel, &second_channel) == ESP_OK && primary_channel > 0) {
+            peer.channel = primary_channel;
+        } else {
+            peer.channel = 0;
+        }
         peer.ifidx = WIFI_IF_STA;
         peer.encrypt = false;
         err = esp_now_add_peer(&peer);
@@ -38,7 +44,7 @@ private:
             ESP_LOGW(TAG_LAMP, "ESP-NOW add broadcast peer: %s", esp_err_to_name(err));
         }
         esp_now_initialized_ = true;
-        ESP_LOGI(TAG_LAMP, "ESP-NOW broadcast peer registered (channel 0 auto-follow STA)");
+        ESP_LOGI(TAG_LAMP, "ESP-NOW broadcast peer registered (channel %d auto-follow STA)", peer.channel);
     }
 
     void SendEspNowCommand(uint8_t cmd) {
@@ -52,8 +58,6 @@ private:
                      cmd, cmd == 1 ? "ON" : (cmd == 0 ? "OFF" : "AUTO"), i + 1, (int)err);
             vTaskDelay(pdMS_TO_TICKS(15));
         }
-        // Restore modem power save after burst
-        esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
     }
 
 public:

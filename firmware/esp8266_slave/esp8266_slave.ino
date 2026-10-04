@@ -135,30 +135,18 @@ void setup() {
 
     currentChannel = targetChannel;
 
-    // Connect to WiFi if matched to lock channel automatically
-    if (matchedIdx >= 0) {
-        Serial.printf("[WIFI] Connecting to '%s' to lock channel %d...\n", KNOWN_SSIDS[matchedIdx], targetChannel);
-        WiFi.begin(KNOWN_SSIDS[matchedIdx], KNOWN_PASSWORDS[matchedIdx]);
-        unsigned long startConnect = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - startConnect < 4000) {
-            delay(100);
-        }
-        if (WiFi.status() == WL_CONNECTED) {
-            currentChannel = WiFi.channel();
-            Serial.printf("[WIFI] Connected successfully! IP: %s | Locked Channel: %d\n", 
-                          WiFi.localIP().toString().c_str(), currentChannel);
-        } else {
-            Serial.printf("[WIFI] Quick connect timeout, locking channel %d manually via Promiscuous mode\n", targetChannel);
-            wifi_promiscuous_enable(1);
-            wifi_set_channel(targetChannel);
-            wifi_promiscuous_enable(0);
-        }
-    } else {
-        Serial.printf("[WIFI] Locking channel %d manually via Promiscuous mode\n", targetChannel);
-        wifi_promiscuous_enable(1);
-        wifi_set_channel(targetChannel);
-        wifi_promiscuous_enable(0);
-    }
+    // Lock Wi-Fi channel in unassociated STA mode with sleep disabled (NONE_SLEEP_T)
+    // This guarantees:
+    // 1. Radio is 100% awake listening for ESP-NOW frames (Zero modem-sleep drops)
+    // 2. No AP BSSID filtering
+    // 3. Instant startup (<100ms)
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    wifi_set_sleep_type(NONE_SLEEP_T);
+    wifi_promiscuous_enable(1);
+    wifi_set_channel(currentChannel);
+    wifi_promiscuous_enable(0);
+    Serial.printf("[WIFI] Radio locked to Channel %d (NONE_SLEEP, 100%% active listening)\n", currentChannel);
 
     if (esp_now_init() != 0) {
         Serial.println("[ESP-NOW] Init Failed!");

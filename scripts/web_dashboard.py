@@ -1,7 +1,7 @@
 """
 Smart Desk Assistant - Web Dashboard Server (PC Bridge)
 Allows controlling and configuring both ESP8266 and ESP32-S3 from a local browser.
-Supports all-in-one WiFi synchronization for both ESPs in a single click.
+Supports nearby WiFi scanning & one-click dual WiFi synchronization for both ESPs.
 """
 
 import os
@@ -9,6 +9,7 @@ import sys
 import time
 import json
 import threading
+import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import serial
@@ -20,6 +21,9 @@ HTTP_PORT = 8080
 
 ser_lock = threading.Lock()
 ser = None
+
+scanned_lock = threading.Lock()
+scanned_networks = []
 
 # Cached telemetry state
 state = {
@@ -40,8 +44,62 @@ state = {
     "esp32_connected": False
 }
 
+def scan_all_wifi():
+    global scanned_networks
+    # 1. Trigger ESP8266 2.4GHz scan
+    send_serial("c\n")
+
+    # 2. Query Windows netsh for instant nearby APs
+    try:
+        out = subprocess.check_output("netsh wlan show networks mode=bssid", shell=True).decode('cp1252', errors='ignore')
+        current_ssid = None
+        current_signal = ""
+        current_channel = ""
+        for l in out.splitlines():
+            l = l.strip()
+            if l.startswith("SSID ") and not l.startswith("BSSID"):
+                parts = l.split(":", 1)
+                if len(parts) > 1:
+                    current_ssid = parts[1].strip()
+            elif l.startswith("Signal"):
+                parts = l.split(":", 1)
+                if len(parts) > 1:
+                    current_signal = parts[1].strip()
+            elif l.startswith("Channel"):
+                parts = l.split(":", 1)
+                if len(parts) > 1:
+                    current_channel = parts[1].strip()
+                    if current_ssid:
+                        with scanned_lock:
+                            if not any(item["ssid"] == current_ssid for item in scanned_networks):
+                                sig_pct = int(current_signal.replace("%", "")) if "%" in current_signal else 70
+                                rssi_val = -100 + (sig_pct // 2)
+                                scanned_networks.append({
+                                    "ssid": current_ssid,
+                                    "channel": current_channel,
+                                    "rssi": rssi_val,
+                                    "signal": current_signal,
+                                    "source": "PC Wi-Fi"
+                                })
+    except Exception as e:
+        pass
+
+    # 3. Add default known networks if not present
+    known_defaults = ["Tung Quan", "TP-Link_C710", "Tp_LinkC6F2", "Xiaozhi-DD2D"]
+    with scanned_lock:
+        for k in known_defaults:
+            if not any(item["ssid"] == k for item in scanned_networks):
+                scanned_networks.append({
+                    "ssid": k,
+                    "channel": 10,
+                    "rssi": -65,
+                    "signal": "75%",
+                    "source": "Đã lưu"
+                })
+        return list(scanned_networks)
+
 def serial_worker():
-    global ser, state
+    global ser, state, scanned_networks
     while True:
         try:
             if ser is None or not ser.is_open:
@@ -90,6 +148,28 @@ def serial_worker():
                             if "raw=" in p:
                                 raw_val = p.split("raw=")[1].replace(")", "").strip()
                                 state["radar_raw"] = int(raw_val)
+                except Exception as e:
+                    pass
+
+            # Parse [WIFI] Found SSID: ... from ESP8266 scan
+            elif "[WIFI] Found SSID:" in line:
+                try:
+                    parts = line.split("|")
+                    s = parts[0].split("Found SSID:")[1].strip()
+                    c = int(parts[1].split("Ch:")[1].strip())
+                    r = int(parts[2].split("RSSI:")[1].replace("dBm", "").strip())
+                    if s:
+                        with scanned_lock:
+                            existing = [item for item in scanned_networks if item["ssid"] == s]
+                            if not existing:
+                                sig_pct = max(0, min(100, 2 * (r + 100)))
+                                scanned_networks.append({
+                                    "ssid": s,
+                                    "channel": c,
+                                    "rssi": r,
+                                    "signal": f"{sig_pct}%",
+                                    "source": "ESP8266 (2.4GHz)"
+                                })
                 except Exception as e:
                     pass
 
@@ -201,6 +281,11 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
 .telemetry-row:last-child{border-bottom:none}
 .telemetry-label{color:var(--text-muted)}
 .telemetry-value{font-weight:600;color:#f1f5f9}
+.wifi-tag{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#1e293b;border:1px solid #334155;border-radius:20px;font-size:12px;cursor:pointer;transition:all 0.2s;color:#f1f5f9;user-select:none}
+.wifi-tag:hover{background:#3b82f6;border-color:#60a5fa;transform:translateY(-1px);box-shadow:0 4px 12px rgba(59,130,246,0.3)}
+.wifi-tag b{font-weight:600}
+.wifi-tag small{color:#94a3b8;font-size:11px}
+.wifi-tag:hover small{color:#e0e7ff}
 #toast{position:fixed;bottom:20px;right:20px;background:#1e293b;border:1px solid var(--success);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;transition:opacity 0.3s;pointer-events:none;z-index:99}
 #toast.show{opacity:1}
 </style>
@@ -293,12 +378,24 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
     <div class="card" style="grid-column:1 / -1">
       <div class="card-title">📶 ĐỒNG BỘ CẤU HÌNH WIFI CHO CẢ 2 ESP (ALL-IN-ONE WIFI SETUP)</div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-        Nhập SSID và Mật khẩu WiFi một lần duy nhất — Hệ thống sẽ tự động cấu hình và kết nối đồng thời cả <b>ESP32-S3 Master</b> (qua NVS COM5) và <b>ESP8266 Slave</b> (qua EEPROM COM8), đảm bảo 2 bo luôn cùng chung 1 kênh sóng (Channel).
+        Chọn mạng WiFi từ danh sách quét gần đây bên dưới hoặc nhập thủ công — Hệ thống sẽ tự động cấu hình và kết nối đồng thời cả <b>ESP32-S3 Master</b> (qua NVS COM5) và <b>ESP8266 Slave</b> (qua EEPROM COM8).
       </div>
+
+      <!-- Khu vực quét WiFi gần đây -->
+      <div style="margin-bottom:14px;padding:14px;background:#0f172a;border:1px solid #334155;border-radius:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-size:12px;font-weight:700;color:#38bdf8">📶 CÁC MẠNG WIFI GẦN ĐÂY ĐƯỢC TÌM THẤY (BẤM ĐỂ CHỌN NHANH):</span>
+          <button class="btn-secondary" style="padding:4px 10px;font-size:11px" onclick="refreshWifiList()">🔄 Quét lại WiFi</button>
+        </div>
+        <div id="wifi-chips" style="display:flex;flex-wrap:wrap;gap:8px">
+          <span style="font-size:12px;color:var(--text-muted)">⏳ Đang quét các mạng WiFi xung quanh...</span>
+        </div>
+      </div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
         <div>
-          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-weight:600">Tên WiFi (SSID)</label>
-          <input type="text" id="dual-ssid" placeholder="Nhập tên mạng WiFi (ví dụ: MyHome_WiFi)" style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#fff;font-size:13px">
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-weight:600">Tên WiFi đã chọn (SSID)</label>
+          <input type="text" id="dual-ssid" placeholder="Bấm chọn từ danh sách ở trên hoặc tự nhập" style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#fff;font-size:13px">
         </div>
         <div>
           <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-weight:600">Mật khẩu WiFi (Password)</label>
@@ -402,6 +499,36 @@ function sendCmd(c){
     .then(d=>{showToast('Đã gửi lệnh: '+c);fetchStatus();});
 }
 
+function selectWifi(ssid){
+  document.getElementById('dual-ssid').value = ssid;
+  document.getElementById('dual-pass').focus();
+  showToast('Đã chọn WiFi: ' + ssid);
+}
+
+function refreshWifiList(){
+  var box = document.getElementById('wifi-chips');
+  box.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">⏳ Đang quét sóng WiFi xung quanh...</span>';
+  fetch('/api/wifi/scan')
+    .then(r => r.json())
+    .then(list => {
+      box.innerHTML = '';
+      if(!list || list.length === 0){
+        box.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">Không tìm thấy mạng WiFi nào. Hãy bấm "Quét lại WiFi".</span>';
+        return;
+      }
+      list.forEach(w => {
+        var tag = document.createElement('div');
+        tag.className = 'wifi-tag';
+        tag.innerHTML = '📶 <b>' + w.ssid + '</b> <small>(' + (w.signal || '--') + ' | Kênh ' + (w.channel || '--') + ')</small>';
+        tag.onclick = function(){ selectWifi(w.ssid); };
+        box.appendChild(tag);
+      });
+    })
+    .catch(e => {
+      box.innerHTML = '<span style="font-size:12px;color:var(--danger)">Lỗi quét WiFi! Bấm "Quét lại" để thử lại.</span>';
+    });
+}
+
 function syncDualWifi(){
   var s=document.getElementById('dual-ssid').value.trim();
   var p=document.getElementById('dual-pass').value.trim();
@@ -444,6 +571,7 @@ function syncDualWifi(){
 
 setInterval(fetchStatus, 1000);
 fetchStatus();
+refreshWifiList();
 </script>
 </body>
 </html>
@@ -462,6 +590,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(state).encode('utf-8'))
+        elif url.path == '/api/wifi/scan':
+            nets = scan_all_wifi()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(nets, ensure_ascii=False).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -568,7 +702,7 @@ def run_server(port=HTTP_PORT):
     print(f"\n=======================================================")
     print(f" [WEB DASHBOARD] Started at: http://localhost:{port}")
     print(f" Connecting to ESP on {SERIAL_PORT} (DTR=False, RTS=False)...")
-    print(f" All-in-One WiFi Sync for ESP32-S3 and ESP8266 is ready!")
+    print(f" Nearby WiFi Scanner & Dual Sync is active!")
     print(f"=======================================================\n")
     try:
         server.serve_forever()

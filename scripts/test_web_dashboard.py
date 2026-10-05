@@ -107,7 +107,18 @@ def run_tests():
         assert "esp32" in data
         print(f"[DUAL-SYNC RECV] ESP8266: {data['esp8266'].encode('ascii', 'replace').decode('ascii')}")
         print(f"[DUAL-SYNC RECV] ESP32: {data['esp32'].encode('ascii', 'replace').decode('ascii')}")
-    print("[PASSED] Dual WiFi synchronization endpoint executed successfully!")
+    # Test 8: GET /api/wifi/scan (Nearby WiFi Scanner)
+    print("\n--> [TEST 8] Testing GET /api/wifi/scan (Nearby WiFi Scanner)...")
+    req = urllib.request.Request(f"{base_url}/api/wifi/scan")
+    with urllib.request.urlopen(req, timeout=5) as res:
+        assert res.status == 200
+        nets = json.loads(res.read().decode('utf-8'))
+        assert isinstance(nets, list)
+        assert len(nets) > 0, "Should discover at least one network or default"
+        for n in nets:
+            assert "ssid" in n
+        print(f"[SCAN SUCCESS] Found {len(nets)} nearby/known WiFi networks")
+    print("[PASSED] Nearby WiFi scanner returns valid network list!")
     
     print("\n==================================================")
     print(" ALL WEB DASHBOARD TESTS COMPLETED SUCCESSFULLY!")

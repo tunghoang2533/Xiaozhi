@@ -850,6 +850,14 @@ void loop() {
                 Serial.printf("[WIFI] Received WiFi from Serial: SSID='%s', connecting...\n", customSsid);
                 WiFi.begin(customSsid, customPass);
             }
+        } else if (c == 'c' || c == 'C') {
+            Serial.println("[WIFI-SCAN] Dang quet mang...");
+            int numNetworks = WiFi.scanNetworks();
+            for (int i = 0; i < numNetworks; i++) {
+                Serial.printf("[WIFI] Found SSID: %-25s | Ch: %2d | RSSI: %3d dBm\n", 
+                              WiFi.SSID(i).c_str(), WiFi.channel(i), (int)WiFi.RSSI(i));
+            }
+            Serial.println("[WIFI-SCAN] Hoan tat quet mang!");
         } else if (c == 'h' || c == 'H' || c == '?') {
             Serial.println("\n--- LENH DIEU KHIEN & HIEU CHINH ESP8266 ---");
             Serial.println(" '0' : Ep TAT den (Uu tien hon cam bien)");
@@ -858,6 +866,7 @@ void loop() {
             Serial.println(" 'p' : Dao cuc Relay (Active-LOW <-> Active-HIGH) & Luu EEPROM");
             Serial.println(" 'r' : Dao cuc Radar (Active-HIGH <-> Active-LOW) & Luu EEPROM");
             Serial.println(" 's' : Xem chan doan trang thai chi tiet (Diagnostics)");
+            Serial.println(" 'c' : Quet cac mang WiFi 2.4GHz xung quanh");
             Serial.println(" 'w <SSID> <PASS>' : Cai dat va dong bo WiFi tu may tinh");
             Serial.println("----------------------------------------------\n");
         }

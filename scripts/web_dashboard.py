@@ -8,7 +8,6 @@ import sys
 import time
 import json
 import threading
-import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import serial
@@ -37,7 +36,7 @@ state = {
     "radar_high": 1,
     "timeout_sec": 15,
     "uptime": 0,
-    "esp32_connected": True
+    "esp32_connected": False
 }
 
 def serial_worker():
@@ -46,15 +45,33 @@ def serial_worker():
         try:
             if ser is None or not ser.is_open:
                 try:
-                    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.5)
-                    print(f"[SERIAL] Connected to ESP on {SERIAL_PORT}")
+                    # Open serial with DTR=False and RTS=False to prevent resetting ESP8266
+                    new_ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.2)
+                    new_ser.dtr = False
+                    new_ser.rts = False
+                    time.sleep(0.1)
+                    new_ser.reset_input_buffer()
+                    with ser_lock:
+                        ser = new_ser
+                    print(f"[SERIAL] Connected to ESP on {SERIAL_PORT} (DTR=False, RTS=False)")
+                    state["esp32_connected"] = True
                 except Exception as e:
-                    time.sleep(2)
+                    state["esp32_connected"] = False
+                    time.sleep(1.5)
                     continue
 
-            line = ser.readline().decode('utf-8', errors='ignore').strip()
+            line = None
+            with ser_lock:
+                if ser and ser.is_open:
+                    if ser.in_waiting > 0:
+                        line = ser.readline().decode('utf-8', errors='ignore').strip()
+
             if not line:
+                time.sleep(0.02)
                 continue
+
+            # Print serial line for debugging
+            # print(f"[ESP-RAW] {line}")
 
             # Parse [STATUS] line: Sitting: 0 | Lamp: 0 | Time: 0s | Radar (D2): LOW (raw=0) | Ch: 10
             if "[STATUS]" in line:
@@ -79,6 +96,13 @@ def serial_worker():
                 except Exception as e:
                     pass
 
+            # Parse [RELAY] line: State set to: ON (Lamp Sang) / OFF (Lamp Tat)
+            elif "[RELAY]" in line:
+                if "ON" in line or "Sang" in line:
+                    state["lamp"] = 1
+                elif "OFF" in line or "Tat" in line:
+                    state["lamp"] = 0
+
             # Parse [DIAG] line
             elif "[DIAG]" in line:
                 try:
@@ -94,7 +118,7 @@ def serial_worker():
                 except Exception as e:
                     pass
 
-            # Parse [CONFIG] or [MODE]
+            # Parse [MODE] line
             elif "[MODE]" in line:
                 if "MANUAL_ON" in line:
                     state["mode"] = "MANUAL_ON"
@@ -109,6 +133,14 @@ def serial_worker():
                     state["mode_code"] = 0
 
         except Exception as e:
+            state["esp32_connected"] = False
+            with ser_lock:
+                if ser:
+                    try:
+                        ser.close()
+                    except:
+                        pass
+                    ser = None
             time.sleep(1)
 
 def send_serial(cmd_str):
@@ -117,6 +149,7 @@ def send_serial(cmd_str):
         if ser and ser.is_open:
             ser.write(cmd_str.encode('utf-8'))
             ser.flush()
+            print(f"[SERIAL-TX] Sent command: {cmd_str.strip()}")
             return True
     return False
 
@@ -163,9 +196,6 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
 .presence-box.occupied{color:var(--success);border:1px solid #065f46}
 .presence-box.empty{color:var(--text-muted);border:1px solid #1e293b}
 .alert-banner{background:#7c2d12;border:1px solid #ea580c;color:#ffedd5;padding:10px 14px;border-radius:10px;margin-top:12px;font-size:12px;font-weight:600;display:none;align-items:center;gap:8px}
-.form-group{margin-bottom:12px}
-.form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-weight:600}
-.form-group select,.form-group input{width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#fff;font-size:13px}
 .btn-primary{background:var(--primary);color:#fff;border:none;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;width:100%;transition:background 0.2s}
 .btn-primary:hover{background:#2563eb}
 .btn-secondary{background:#334155;color:#fff;border:none;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:background 0.2s}
@@ -189,8 +219,8 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
       </div>
     </div>
     <div class="badges">
-      <div class="badge"><div class="pulse"></div>ONLINE (SERIAL)</div>
-      <div class="badge" id="b-ch">KÊNH: 10</div>
+      <div class="badge" id="b-online"><div class="pulse"></div>ONLINE (COM8)</div>
+      <div class="badge" id="b-ch">KÊNH: --</div>
       <div class="badge" id="b-ip">IP: 192.168.4.1</div>
     </div>
   </header>
@@ -206,6 +236,10 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
         <button id="btn-auto" class="btn" onclick="setMode('auto')">🟢 TỰ ĐỘNG</button>
         <button id="btn-on" class="btn" onclick="setMode('on')">💡 BẬT ĐÈN</button>
         <button id="btn-off" class="btn" onclick="setMode('off')">🌑 TẮT ĐÈN</button>
+      </div>
+      <div style="margin-top:12px;font-size:11px;color:var(--text-muted)">
+        • <b>TỰ ĐỘNG</b>: Cảm biến radar tự bật khi ngồi vào, tự tắt khi rời bàn.<br>
+        • <b>BẬT/TẮT</b>: Ép đèn giữ trạng thái cố định.
       </div>
     </div>
 
@@ -243,7 +277,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
       <div class="card-title">📡 KẾT NỐI ESP-NOW & ESP32-S3</div>
       <div class="telemetry-row">
         <span class="telemetry-label">Kênh sóng ESP-NOW (Channel)</span>
-        <span class="telemetry-value" id="val-ch">Kênh 10</span>
+        <span class="telemetry-value" id="val-ch">Kênh --</span>
       </div>
       <div class="telemetry-row">
         <span class="telemetry-label">Trạng thái ESP32-S3 Master</span>
@@ -274,6 +308,15 @@ function fmtTime(sec){
 }
 
 function updateUI(d){
+  var bOnline=document.getElementById('b-online');
+  if(bOnline){
+    if(d.esp32_connected){
+      bOnline.innerHTML='<div class="pulse"></div>ONLINE (COM8)';
+    }else{
+      bOnline.innerHTML='<div class="pulse" style="background:var(--danger);box-shadow:0 0 8px var(--danger)"></div>MẤT KẾT NỐI';
+    }
+  }
+
   document.getElementById('b-ch').innerText='KÊNH: '+d.channel;
   document.getElementById('b-ip').innerText='IP: '+d.ip;
   document.getElementById('val-ch').innerText='Kênh '+d.channel;
@@ -369,14 +412,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             if mode == 'on' or mode == '1':
                 send_serial('1\n')
                 state["mode"] = "MANUAL_ON"
+                state["mode_code"] = 2
                 state["lamp"] = 1
             elif mode == 'off' or mode == '0':
                 send_serial('0\n')
                 state["mode"] = "MANUAL_OFF"
+                state["mode_code"] = 1
                 state["lamp"] = 0
             elif mode == 'auto':
                 send_serial('a\n')
                 state["mode"] = "AUTO"
+                state["mode_code"] = 0
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -394,7 +440,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass # Suppress HTTP access logging
+        pass
 
 def run_server(port=HTTP_PORT):
     t = threading.Thread(target=serial_worker, daemon=True)
@@ -403,14 +449,15 @@ def run_server(port=HTTP_PORT):
     server = HTTPServer(('0.0.0.0', port), RequestHandler)
     print(f"\n=======================================================")
     print(f" [WEB DASHBOARD] Started at: http://localhost:{port}")
-    print(f" Connecting to ESP on {SERIAL_PORT}...")
+    print(f" Connecting to ESP on {SERIAL_PORT} (DTR=False, RTS=False)...")
     print(f"=======================================================\n")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopping server...")
-        if ser and ser.is_open:
-            ser.close()
+        with ser_lock:
+            if ser and ser.is_open:
+                ser.close()
 
 if __name__ == '__main__':
     p = int(sys.argv[1]) if len(sys.argv) > 1 else HTTP_PORT

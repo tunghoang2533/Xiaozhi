@@ -50,5 +50,32 @@ class TestFirmwareIntegrity(unittest.TestCase):
         self.assertEqual(keys.get('spk_bclk'), 15, "Speaker BCLK must be GPIO 15 on S3 Tim")
         self.assertEqual(keys.get('p_lamp'), -1, "p_lamp must be -1 to prevent conflict with spk_bclk")
 
+    def test_esp32_master_firmware_structure(self):
+        ino_path = os.path.join(self.repo_dir, "firmware", "esp32_master", "esp32_master.ino")
+        self.assertTrue(os.path.exists(ino_path), "esp32_master.ino must exist")
+        with open(ino_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("ESP32-S3 MASTER", content)
+        self.assertIn("struct __attribute__((packed)) DeskCommandPacket", content)
+        self.assertIn("struct __attribute__((packed)) DeskStatusPacket", content)
+        self.assertIn("esp_now_init()", content)
+        self.assertIn("sendEspNowCommand", content)
+        self.assertIn("TRỢ LÝ BÀN LÀM VIỆC THÔNG MINH", content)
+
+    def test_esp8266_slave_firmware_structure(self):
+        ino_path = os.path.join(self.repo_dir, "firmware", "esp8266_slave", "esp8266_slave.ino")
+        self.assertTrue(os.path.exists(ino_path), "esp8266_slave.ino must exist")
+        with open(ino_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("#define RADAR_PIN   D2", content)
+        self.assertIn("#define RELAY_PIN   D1", content)
+        self.assertIn("setRelay", content)
+        self.assertIn("onDataRecv", content)
+        self.assertIn("saveSettings", content)
+        self.assertIn("debouncedOccupied", content)
+        self.assertIn("autoOffTimeoutSec", content)
+        self.assertIn("TRỢ LÝ BÀN LÀM VIỆC THÔNG MINH", content)
+        self.assertIn("VBUS", content)
+
 if __name__ == '__main__':
     unittest.main()

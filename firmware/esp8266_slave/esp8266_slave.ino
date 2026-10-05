@@ -1,24 +1,55 @@
+/*
+ * ====================================================================================
+ * DỰ ÁN: TRỢ LÝ BÀN LÀM VIỆC THÔNG MINH (SMART DESK ASSISTANT)
+ * TẬP TIN: esp8266_slave.ino (FIRMWARE BO PHỤ: ESP8266 SLAVE DƯỚI GẦM BÀN)
+ * ====================================================================================
+ * VAI TRÒ HỆ THỐNG:
+ * - Đặt dưới gầm bàn / hộp kỹ thuật, kết nối trực tiếp với các ngoại vi:
+ *   1. Cảm biến radar hiện diện mmWave 24GHz HLK-LD2410 / LD2410C (Chân D2 - GPIO4)
+ *   2. Module Relay 1-2 kênh đóng ngắt nguồn đèn bàn 220V/12V (Chân D1 - GPIO5)
+ * - Tự động bật đèn khi phát hiện người ngồi vào bàn, tự động tắt khi rời bàn (sau timeout).
+ * - Tự động đếm thời gian ngồi làm việc liên tục (Sitting tracker) phục vụ nhắc nhở công thái học.
+ * - Nhận lệnh điều khiển cưỡng chế (BẬT/TẮT/AUTO) từ ESP32-S3 Master qua mạng ESP-NOW.
+ * - Tích hợp Web Dashboard nội bộ (cổng 80) để theo dõi và hiệu chỉnh phần cứng trực tiếp.
+ * ====================================================================================
+ * LƯU Ý PHẦN CỨNG QUAN TRỌNG:
+ * - Nguồn cấp: LD2410C và Relay BẮT BUỘC cắm vào chân VBUS (5V từ cổng USB).
+ *   Không cắm vào chân VIN (do có diode chống ngược gây sụt áp) hoặc 3V3 (thiếu áp/quá tải).
+ * - Sơ đồ chân HLK-LD2410C:
+ *   + Chân 5 (VCC, dưới cùng) -> VBUS (5V)
+ *   + Chân 4 (GND) -> GND
+ *   + Chân 3 (OUT, ở giữa) -> D2 (GPIO4)
+ *   + Chân 1 (TX), Chân 2 (RX) -> Bỏ trống
+ * ====================================================================================
+ */
+
 #include <ESP8266WiFi.h>
 #include <espnow.h>
 #include <EEPROM.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 
-#define RADAR_PIN   D2 // GPIO4 - LD2410 OUT pin
-#define RELAY_PIN   D1 // GPIO5 - Relay IN1 pin
+// ====================================================================================
+// 1. ĐỊNH NGHĨA CHÂN NGOẠI VI (PIN DEFINITION)
+// ====================================================================================
+#define RADAR_PIN   D2 // GPIO4 - Chân nhận tín hiệu OUT từ cảm biến radar LD2410C (HIGH: có người)
+#define RELAY_PIN   D1 // GPIO5 - Chân xuất tín hiệu điều khiển cuộn hút Module Relay (IN1)
 
-#define EEPROM_MAGIC 0x5A
+#define EEPROM_MAGIC 0x5A // Mã nhận diện dữ liệu cấu hình hợp lệ trong bộ nhớ flash EEPROM
 
-// Hardware Settings
-bool relayActiveLow = false;
-bool radarActiveHigh = true;
-uint16_t autoOffTimeoutSec = 15;
+// ====================================================================================
+// 2. BIẾN CẤU HÌNH PHẦN CỨNG & LƯU TRỮ EEPROM
+// ====================================================================================
+bool relayActiveLow = false;       // Cực điều khiển Relay: false = Kích mức HIGH (Jumper H), true = Kích mức LOW (Jumper L)
+bool radarActiveHigh = true;       // Logic cảm biến Radar: true = Mức HIGH (3.3V) là Có người (chuẩn LD2410C)
+uint16_t autoOffTimeoutSec = 15;   // Thời gian trễ đếm ngược tự động tắt đèn sau khi rời bàn (giây)
 
-// WiFi credentials in EEPROM
+// Thông tin mạng WiFi tùy chỉnh lưu trong EEPROM
 bool hasCustomWifi = false;
 char customSsid[33] = {0};
 char customPass[65] = {0};
 
+// Hàm lưu cấu hình hiện tại vào bộ nhớ không bay hơi EEPROM
 void saveSettings() {
     EEPROM.write(0, EEPROM_MAGIC);
     EEPROM.write(1, relayActiveLow ? 1 : 0);
@@ -33,7 +64,7 @@ void saveSettings() {
                   relayActiveLow ? 1 : 0, radarActiveHigh ? 1 : 0, autoOffTimeoutSec, hasCustomWifi ? 1 : 0);
 }
 
-// Known SSIDs fallback
+// Danh sách các mạng WiFi quen thuộc dự phòng (fallback khi quét sóng)
 const char* KNOWN_SSIDS[] = {
     "TP-Link_C710",
     "Tung Quan",
@@ -48,49 +79,61 @@ const char* KNOWN_PASSWORDS[] = {
 };
 const int KNOWN_NETWORKS_COUNT = 4;
 
-// ESP-NOW Packets
+// ====================================================================================
+// 3. CẤU TRÚC GÓI TIN TRUYỀN THÔNG ESP-NOW (TƯƠNG THÍCH ESP32-S3 MASTER)
+// ====================================================================================
+
+// Gói tin nhận lệnh từ ESP32-S3 gửi sang
 struct __attribute__((packed)) DeskCommandPacket {
-    uint8_t magic; // 0x5A
-    uint8_t cmd;   // 0: Off, 1: On, 2: Auto
+    uint8_t magic; // Mã nhận diện: 0x5A
+    uint8_t cmd;   // 0: Ép Tắt đèn, 1: Ép Bật đèn, 2: Trả lại chế độ Tự động (AUTO)
 };
 
+// Gói tin gửi báo cáo trạng thái định kỳ sang ESP32-S3
 struct __attribute__((packed)) DeskStatusPacket {
-    uint8_t  magic;             // 0xA5
-    uint8_t  is_sitting;        // 1: sitting, 0: left
-    uint8_t  lamp_state;        // 1: on, 0: off
-    uint32_t sitting_time_sec; // sitting duration in seconds
+    uint8_t  magic;            // Mã nhận diện: 0xA5
+    uint8_t  is_sitting;       // 1: Đang ngồi bàn, 0: Đã rời bàn
+    uint8_t  lamp_state;       // 1: Đèn đang sáng, 0: Đèn đang tắt
+    uint32_t sitting_time_sec; // Thời gian ngồi liên tục (giây)
 };
 
+// Các chế độ ưu tiên điều khiển hệ thống
 enum ControlMode {
     MODE_AUTO = 0,       // Tự động bật/tắt theo cảm biến radar LD2410
-    MODE_MANUAL_OFF = 1, // Ưu tiên ra lệnh TẮT: Đèn luôn TẮT
-    MODE_MANUAL_ON = 2   // Ưu tiên ra lệnh BẬT: Đèn luôn BẬT
+    MODE_MANUAL_OFF = 1, // Ưu tiên ra lệnh TẮT: Đèn luôn TẮT (bỏ qua cảm biến)
+    MODE_MANUAL_ON = 2   // Ưu tiên ra lệnh BẬT: Đèn luôn BẬT (bỏ qua cảm biến)
 };
 
-// Global variables
-uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+// ====================================================================================
+// 4. KHAI BÁO BIẾN TOÀN CỤC & TRẠNG THÁI HỆ THỐNG
+// ====================================================================================
+uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // Địa chỉ phát sóng Broadcast ESP-NOW
 DeskStatusPacket statusPacket;
 DeskCommandPacket rxPacket;
 
-ControlMode currentMode = MODE_AUTO;
-bool currentLampState = false;
-bool currentSittingState = false;
-unsigned long sittingStartMs = 0;
-unsigned long totalSittingSec = 0;
-unsigned long lastOccupiedMs = 0;
-unsigned long lastStatusReportMs = 0;
-int currentChannel = 1;
+ControlMode currentMode = MODE_AUTO;    // Chế độ mặc định là TỰ ĐỘNG
+bool currentLampState = false;          // Trạng thái đèn hiện tại (true = sáng, false = tắt)
+bool currentSittingState = false;       // Trạng thái người ngồi hiện tại
+unsigned long sittingStartMs = 0;       // Mốc thời gian bắt đầu ngồi (millis)
+unsigned long totalSittingSec = 0;      // Tổng số giây ngồi làm việc liên tục
+unsigned long lastOccupiedMs = 0;       // Mốc thời gian lần cuối còn thấy người (millis)
+unsigned long lastStatusReportMs = 0;   // Mốc thời gian lần cuối gửi gói tin ESP-NOW (millis)
+int currentChannel = 1;                 // Kênh sóng WiFi hiện tại
 
-// Debounce filter for radar
+// Bộ lọc chống rung / khử nhiễu (Debounce) cho chân D2 của radar
 int lastRawRadar = -1;
 unsigned long rawRadarChangeMs = 0;
 bool debouncedOccupied = false;
 
-// Web Server
+// Khởi tạo máy chủ Web nội bộ chạy cổng 80
 ESP8266WebServer server(80);
 
+// ====================================================================================
+// 5. HÀM ĐIỀU KHIỂN MODULE RELAY ĐÓNG / NGẮT ĐÈN BÀN
+// ====================================================================================
 void setRelay(bool turnOn) {
     currentLampState = turnOn;
+    // Tự động tính toán mức điện áp xuất ra chân D1 theo cấu hình Active-LOW hoặc Active-HIGH
     int pinLevel = turnOn ? (relayActiveLow ? LOW : HIGH) : (relayActiveLow ? HIGH : LOW);
     digitalWrite(RELAY_PIN, pinLevel);
     Serial.printf("[RELAY] State set to: %s (Pin D1 = %s | ActiveLow: %s)\n", 
@@ -99,6 +142,9 @@ void setRelay(bool turnOn) {
                   relayActiveLow ? "YES" : "NO");
 }
 
+// ====================================================================================
+// 6. HÀM CALLBACK XỬ LÝ GÓI TIN NHẬN ĐƯỢC TỪ ESP32-S3 QUA ESP-NOW
+// ====================================================================================
 void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     if (len == sizeof(DeskCommandPacket)) {
         memcpy(&rxPacket, incomingData, sizeof(rxPacket));
@@ -108,13 +154,16 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
                           rxPacket.cmd == 1 ? "FORCE ON" : (rxPacket.cmd == 0 ? "FORCE OFF" : "AUTO"),
                           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
             if (rxPacket.cmd == 1) {
+                // Lệnh cưỡng chế BẬT đèn từ giọng nói AI / ESP32-S3
                 currentMode = MODE_MANUAL_ON;
                 setRelay(true);
                 lastOccupiedMs = millis();
             } else if (rxPacket.cmd == 0) {
+                // Lệnh cưỡng chế TẮT đèn từ giọng nói AI / ESP32-S3
                 currentMode = MODE_MANUAL_OFF;
                 setRelay(false);
             } else if (rxPacket.cmd == 2) {
+                // Lệnh trả lại quyền điều khiển TỰ ĐỘNG theo cảm biến radar
                 currentMode = MODE_AUTO;
                 if (debouncedOccupied) setRelay(true); else setRelay(false);
             }
@@ -589,6 +638,9 @@ void handleNotFound() {
     server.send(404, "text/plain", "Not Found");
 }
 
+// ====================================================================================
+// 7. HÀM KHỞI TẠO HỆ THỐNG (SETUP)
+// ====================================================================================
 void setup() {
     Serial.begin(115200);
     delay(500);
@@ -596,8 +648,10 @@ void setup() {
     Serial.println(" SMART DESK ASSISTANT - ESP8266 SLAVE ");
     Serial.println("==========================================");
 
+    // Bước 1: Khởi tạo và đọc cấu hình từ bộ nhớ EEPROM (128 bytes)
     EEPROM.begin(128);
     if (EEPROM.read(0) == EEPROM_MAGIC) {
+        // Đã có cấu hình lưu trước đó: Đọc các tham số đã hiệu chỉnh
         relayActiveLow = (EEPROM.read(1) == 1);
         radarActiveHigh = (EEPROM.read(2) == 1);
         uint16_t savedTimeout = EEPROM.read(3) | (EEPROM.read(4) << 8);
@@ -619,9 +673,10 @@ void setup() {
                       autoOffTimeoutSec,
                       hasCustomWifi ? customSsid : "NONE");
     } else {
-        relayActiveLow = false;
-        radarActiveHigh = true;
-        autoOffTimeoutSec = 15;
+        // Chưa có dữ liệu EEPROM: Nạp cấu hình mặc định ban đầu
+        relayActiveLow = false;     // Mặc định Relay kích mức HIGH (Jumper H)
+        radarActiveHigh = true;     // Mặc định Radar LD2410C mức HIGH là Có người
+        autoOffTimeoutSec = 15;     // Thời gian chờ tắt đèn 15 giây
         hasCustomWifi = false;
         memset(customSsid, 0, sizeof(customSsid));
         memset(customPass, 0, sizeof(customPass));
@@ -629,17 +684,19 @@ void setup() {
         Serial.println("[CONFIG] Initialized default settings to EEPROM (15s timeout, Active-HIGH)");
     }
 
-    pinMode(RADAR_PIN, INPUT);
-    pinMode(RELAY_PIN, OUTPUT);
-    setRelay(false);
+    // Bước 2: Thiết lập chế độ cho các chân GPIO
+    pinMode(RADAR_PIN, INPUT);   // Chân D2 (GPIO4) nhận mức logic 0V / 3.3V từ chân OUT cảm biến
+    pinMode(RELAY_PIN, OUTPUT);  // Chân D1 (GPIO5) xuất mức điều khiển đóng ngắt cuộn hút Relay
+    setRelay(false);             // Trạng thái ban đầu: Đèn TẮT an toàn
 
-    // Initialize SoftAP + Station mode so web dashboard is ALWAYS reachable
+    // Bước 3: Khởi tạo WiFi chế độ kết hợp (AP + Station)
+    // Giúp Web Dashboard luôn truy cập được qua điểm phát SoftAP độc lập
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP("SmartDesk-Assistant", "12345678");
     Serial.printf("[WIFI] SoftAP started: 'SmartDesk-Assistant' (Pass: 12345678) | IP: %s\n",
                   WiFi.softAPIP().toString().c_str());
 
-    // Auto-discover router WiFi channel or connect to configured network
+    // Bước 4: Tự động dò tìm kênh sóng WiFi để đồng bộ kênh với bo ESP32-S3
     Serial.println("[WIFI] Scanning networks to synchronize channel with ESP32...");
     int n = WiFi.scanNetworks();
     int targetChannel = 10;
@@ -671,7 +728,7 @@ void setup() {
 
     currentChannel = targetChannel;
 
-    // Connect to WiFi if matched
+    // Bước 5: Kết nối vào mạng WiFi (nếu tìm thấy mạng quen thuộc)
     if (matchCustom) {
         Serial.printf("[WIFI] Connecting to Custom '%s' on Channel %d (Timeout: 10s)...\n", customSsid, targetChannel);
         WiFi.begin(customSsid, customPass);
@@ -696,20 +753,20 @@ void setup() {
         }
     }
 
-    // Disable WiFi sleep for 100% responsive ESP-NOW and Web Server
+    // Tắt chế độ tiết kiệm pin WiFi để đảm bảo ESP-NOW và Web Server phản hồi tức thì
     wifi_set_sleep_type(NONE_SLEEP_T);
 
-    // Initialize ESP-NOW
+    // Bước 6: Khởi tạo giao thức không dây ESP-NOW
     if (esp_now_init() != 0) {
         Serial.println("[ESP-NOW] Init Failed!");
     } else {
         Serial.printf("[ESP-NOW] Init Success on Channel %d!\n", currentChannel);
-        esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
-        esp_now_register_recv_cb(onDataRecv);
+        esp_now_set_self_role(ESP_NOW_ROLE_COMBO); // Chế độ kết hợp: vừa phát vừa nhận
+        esp_now_register_recv_cb(onDataRecv);      // Đăng ký hàm nhận lệnh từ ESP32-S3
         esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_COMBO, currentChannel, NULL, 0);
     }
 
-    // Initialize Web Server routes
+    // Bước 7: Khởi tạo máy chủ Web Server nội bộ (Port 80)
     server.on("/", HTTP_GET, handleRoot);
     server.on("/api/status", HTTP_GET, handleApiStatus);
     server.on("/api/control", HTTP_POST, handleApiControl);
@@ -721,26 +778,35 @@ void setup() {
     server.begin();
     Serial.println("[HTTP] Web Server started on port 80!");
 
+    // Bước 8: Khởi tạo dịch vụ tên miền mDNS (truy cập bằng http://smartdesk.local)
     if (MDNS.begin("smartdesk")) {
         Serial.println("[mDNS] Responder started at http://smartdesk.local");
         MDNS.addService("http", "tcp", 80);
     }
 }
 
+// ====================================================================================
+// 8. VÒNG LẶP CHÍNH (LOOP)
+// ====================================================================================
 void loop() {
     unsigned long now = millis();
 
-    // 0. Handle Web Server & mDNS
+    // --------------------------------------------------------------------------------
+    // 0. Xử lý yêu cầu Web Server & Phân giải tên miền mDNS
+    // --------------------------------------------------------------------------------
     server.handleClient();
     MDNS.update();
 
-    // 1. Debounce Radar Input (D2)
+    // --------------------------------------------------------------------------------
+    // 1. Bộ lọc chống rung / khử nhiễu (Debounce 100ms) cho chân cảm biến Radar D2
+    // --------------------------------------------------------------------------------
     int rawRadar = digitalRead(RADAR_PIN);
     if (rawRadar != lastRawRadar) {
         lastRawRadar = rawRadar;
         rawRadarChangeMs = now;
     }
 
+    // Tín hiệu chỉ được xác nhận nếu giữ nguyên ổn định trong ít nhất 100ms
     if (now - rawRadarChangeMs >= 100) {
         bool newOccupied = radarActiveHigh ? (rawRadar == HIGH) : (rawRadar == LOW);
         if (newOccupied != debouncedOccupied) {
@@ -757,37 +823,43 @@ void loop() {
         }
     }
 
-    // 2. Desk Automation Logic
+    // --------------------------------------------------------------------------------
+    // 2. Thuật toán tự động hóa bàn làm việc & Theo dõi công thái học (Ergonomics Tracker)
+    // --------------------------------------------------------------------------------
     unsigned long timeoutMs = ((unsigned long)autoOffTimeoutSec) * 1000UL;
 
     if (debouncedOccupied) {
-        lastOccupiedMs = now;
+        // TRƯỜNG HỢP: ĐANG CÓ NGƯỜI NGỒI LÀM VIỆC TẠI BÀN
+        lastOccupiedMs = now; // Luôn cập nhật mốc thời gian còn thấy người
         if (!currentSittingState) {
             currentSittingState = true;
-            sittingStartMs = now;
+            sittingStartMs = now; // Bắt đầu tính giờ ngồi làm việc
             Serial.println("[DESK] Bat dau dem thoi gian ngoi ban lam viec!");
         }
-        totalSittingSec = (now - sittingStartMs) / 1000;
+        totalSittingSec = (now - sittingStartMs) / 1000; // Cập nhật tổng số giây ngồi liên tục
 
+        // Điều khiển đèn theo chế độ hiện tại
         if (currentMode == MODE_AUTO) {
-            if (!currentLampState) setRelay(true);
+            if (!currentLampState) setRelay(true); // TỰ ĐỘNG BẬT ĐÈN KHI NGỒI VÀO BÀN
         } else if (currentMode == MODE_MANUAL_OFF) {
-            if (currentLampState) setRelay(false);
+            if (currentLampState) setRelay(false); // Cưỡng chế TẮT: giữ đèn tắt
         } else if (currentMode == MODE_MANUAL_ON) {
-            if (!currentLampState) setRelay(true);
+            if (!currentLampState) setRelay(true);  // Cưỡng chế BẬT: giữ đèn bật
         }
     } else {
+        // TRƯỜNG HỢP: KHÔNG THẤY NGƯỜI (ĐÃ ĐỨNG DẬY RỜI BÀN)
+        // Kiểm tra xem đã hết thời gian trễ an toàn (Timeout) chưa
         if (now - lastOccupiedMs >= timeoutMs) {
             if (currentSittingState) {
-                currentSittingState = false;
+                currentSittingState = false; // Xác nhận người dùng đã rời bàn hẳn
                 Serial.println("[DESK] Nguoi dung da roi ban (het timeout)!");
             }
             if (currentMode == MODE_AUTO) {
-                if (currentLampState) setRelay(false);
+                if (currentLampState) setRelay(false); // TỰ ĐỘNG TẮT ĐÈN KHI RỜI BÀN
             }
         }
 
-        // Long absence restore to AUTO mode
+        // Tự động khôi phục về chế độ AUTO nếu vắng mặt hơn 5 phút (cho lần ngồi sau)
         if (now - lastOccupiedMs >= 300000UL) {
             if (currentMode != MODE_AUTO) {
                 currentMode = MODE_AUTO;
@@ -796,7 +868,9 @@ void loop() {
         }
     }
 
-    // 3. Serial Command Interface
+    // --------------------------------------------------------------------------------
+    // 3. Giao diện dòng lệnh điều khiển & Chẩn đoán qua cổng Serial máy tính
+    // --------------------------------------------------------------------------------
     if (Serial.available()) {
         char c = Serial.read();
         if (c == '1') {
@@ -813,17 +887,20 @@ void loop() {
             currentMode = MODE_AUTO;
             if (debouncedOccupied) setRelay(true); else setRelay(false);
         } else if (c == 'p' || c == 'P') {
+            // Đảo cực kích cuộn hút Relay (Active-LOW <-> Active-HIGH) & Lưu EEPROM
             relayActiveLow = !relayActiveLow;
             saveSettings();
             Serial.printf("[SERIAL] Toggled Relay Polarity: ActiveLow is now %s (Saved to EEPROM)\n", 
                           relayActiveLow ? "YES (Jumper L)" : "NO (Jumper H)");
             setRelay(currentLampState);
         } else if (c == 'r' || c == 'R') {
+            // Đảo logic ngõ ra cảm biến Radar (Active-HIGH <-> Active-LOW) & Lưu EEPROM
             radarActiveHigh = !radarActiveHigh;
             saveSettings();
             Serial.printf("[SERIAL] Toggled Radar Logic: ActiveHigh is now %s (Saved to EEPROM)\n", 
                           radarActiveHigh ? "YES (HIGH=Occupied)" : "NO (LOW=Occupied)");
         } else if (c == 's' || c == 'S') {
+            // In bảng chẩn đoán trạng thái chi tiết thời gian thực
             const char* modeStr = (currentMode == MODE_AUTO) ? "AUTO" : 
                                   ((currentMode == MODE_MANUAL_OFF) ? "MANUAL_OFF" : "MANUAL_ON");
             String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
@@ -833,6 +910,7 @@ void loop() {
                           currentSittingState ? totalSittingSec : 0,
                           rawRadar, currentChannel, ipStr.c_str());
         } else if (c == 'w' || c == 'W') {
+            // Cài đặt và đồng bộ mạng WiFi mới
             String cmdStr = Serial.readStringUntil('\n');
             cmdStr.trim();
             int spaceIdx = cmdStr.indexOf(' ');
@@ -851,6 +929,7 @@ void loop() {
                 WiFi.begin(customSsid, customPass);
             }
         } else if (c == 'c' || c == 'C') {
+            // Quét các mạng WiFi 2.4GHz xung quanh
             Serial.println("[WIFI-SCAN] Dang quet mang...");
             int numNetworks = WiFi.scanNetworks();
             for (int i = 0; i < numNetworks; i++) {
@@ -859,6 +938,7 @@ void loop() {
             }
             Serial.println("[WIFI-SCAN] Hoan tat quet mang!");
         } else if (c == 'h' || c == 'H' || c == '?') {
+            // In danh sách phím tắt trợ giúp
             Serial.println("\n--- LENH DIEU KHIEN & HIEU CHINH ESP8266 ---");
             Serial.println(" '0' : Ep TAT den (Uu tien hon cam bien)");
             Serial.println(" '1' : Ep BAT den (Uu tien hon cam bien)");
@@ -872,7 +952,9 @@ void loop() {
         }
     }
 
-    // 4. Send Status Report Every 1 Second via ESP-NOW Broadcast
+    // --------------------------------------------------------------------------------
+    // 4. Phát báo cáo trạng thái định kỳ 1 giây/lần qua ESP-NOW Broadcast sang ESP32-S3
+    // --------------------------------------------------------------------------------
     if (now - lastStatusReportMs >= 1000) {
         lastStatusReportMs = now;
         statusPacket.magic = 0xA5;

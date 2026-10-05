@@ -832,6 +832,24 @@ void loop() {
                           currentSittingState ? 1 : 0, currentLampState ? 1 : 0,
                           currentSittingState ? totalSittingSec : 0,
                           rawRadar, currentChannel, ipStr.c_str());
+        } else if (c == 'w' || c == 'W') {
+            String cmdStr = Serial.readStringUntil('\n');
+            cmdStr.trim();
+            int spaceIdx = cmdStr.indexOf(' ');
+            if (spaceIdx > 0) {
+                String s = cmdStr.substring(0, spaceIdx);
+                String p = cmdStr.substring(spaceIdx + 1);
+                s.trim();
+                p.trim();
+                memset(customSsid, 0, sizeof(customSsid));
+                memset(customPass, 0, sizeof(customPass));
+                s.toCharArray(customSsid, sizeof(customSsid));
+                p.toCharArray(customPass, sizeof(customPass));
+                hasCustomWifi = true;
+                saveSettings();
+                Serial.printf("[WIFI] Received WiFi from Serial: SSID='%s', connecting...\n", customSsid);
+                WiFi.begin(customSsid, customPass);
+            }
         } else if (c == 'h' || c == 'H' || c == '?') {
             Serial.println("\n--- LENH DIEU KHIEN & HIEU CHINH ESP8266 ---");
             Serial.println(" '0' : Ep TAT den (Uu tien hon cam bien)");
@@ -840,6 +858,7 @@ void loop() {
             Serial.println(" 'p' : Dao cuc Relay (Active-LOW <-> Active-HIGH) & Luu EEPROM");
             Serial.println(" 'r' : Dao cuc Radar (Active-HIGH <-> Active-LOW) & Luu EEPROM");
             Serial.println(" 's' : Xem chan doan trang thai chi tiet (Diagnostics)");
+            Serial.println(" 'w <SSID> <PASS>' : Cai dat va dong bo WiFi tu may tinh");
             Serial.println("----------------------------------------------\n");
         }
     }

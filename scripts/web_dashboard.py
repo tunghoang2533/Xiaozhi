@@ -1,9 +1,10 @@
 """
 Smart Desk Assistant - Web Dashboard Server (PC Bridge)
 Allows controlling and configuring both ESP8266 and ESP32-S3 from a local browser.
-Zero external dependencies beyond pyserial.
+Supports all-in-one WiFi synchronization for both ESPs in a single click.
 """
 
+import os
 import sys
 import time
 import json
@@ -45,7 +46,6 @@ def serial_worker():
         try:
             if ser is None or not ser.is_open:
                 try:
-                    # Open serial with DTR=False and RTS=False to prevent resetting ESP8266
                     new_ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.2)
                     new_ser.dtr = False
                     new_ser.rts = False
@@ -69,9 +69,6 @@ def serial_worker():
             if not line:
                 time.sleep(0.02)
                 continue
-
-            # Print serial line for debugging
-            # print(f"[ESP-RAW] {line}")
 
             # Parse [STATUS] line: Sitting: 0 | Lamp: 0 | Time: 0s | Radar (D2): LOW (raw=0) | Ch: 10
             if "[STATUS]" in line:
@@ -161,7 +158,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Smart Desk Assistant - PC Dashboard</title>
 <style>
-:root{--bg:#0b0f19;--card:#141c2e;--card-border:#1e293b;--text:#f8fafc;--text-muted:#94a3b8;--primary:#3b82f6;--success:#10b981;--warning:#f59e0b;--danger:#ef4444;}
+:root{--bg:#0b0f19;--card:#141c2e;--card-border:#1e293b;--text:#f8fafc;--text-muted:#94a3b8;--primary:#3b82f6;--success:#10b981;--warning:#f59e0b;--danger:#ef4444;--accent:#8b5cf6;}
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 body{background:var(--bg);color:var(--text);padding:14px;min-height:100vh}
 .container{max-width:960px;margin:0 auto}
@@ -226,6 +223,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
   </header>
 
   <div class="grid">
+    <!-- Card 1: Điều khiển đèn -->
     <div class="card">
       <div class="card-title">💡 ĐIỀU KHIỂN ĐÈN BÀN</div>
       <div class="lamp-hero">
@@ -243,6 +241,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
       </div>
     </div>
 
+    <!-- Card 2: Công thái học & Radar -->
     <div class="card">
       <div class="card-title">🪑 CÔNG THÁI HỌC & CẢM BIẾN RADAR</div>
       <div class="presence-box empty" id="presence-box">
@@ -264,6 +263,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
       </div>
     </div>
 
+    <!-- Card 3: Cấu hình phần cứng -->
     <div class="card">
       <div class="card-title">⚙️ CẤU HÌNH PHẦN CỨNG & HIỆU CHỈNH</div>
       <div style="display:flex;gap:10px;margin-bottom:10px">
@@ -273,6 +273,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
       <button class="btn-secondary" style="width:100%" onclick="sendCmd('s')">📊 Yêu Cầu Chẩn Đoán Chi Tiết</button>
     </div>
 
+    <!-- Card 4: ESP-NOW -->
     <div class="card">
       <div class="card-title">📡 KẾT NỐI ESP-NOW & ESP32-S3</div>
       <div class="telemetry-row">
@@ -287,17 +288,38 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:cen
         <button class="btn-primary" onclick="sendCmd('s')">📡 ĐỒNG BỘ TELEMETRY</button>
       </div>
     </div>
+
+    <!-- Card 5: Cấu hình WiFi đồng bộ cho cả 2 ESP (ALL-IN-ONE) -->
+    <div class="card" style="grid-column:1 / -1">
+      <div class="card-title">📶 ĐỒNG BỘ CẤU HÌNH WIFI CHO CẢ 2 ESP (ALL-IN-ONE WIFI SETUP)</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+        Nhập SSID và Mật khẩu WiFi một lần duy nhất — Hệ thống sẽ tự động cấu hình và kết nối đồng thời cả <b>ESP32-S3 Master</b> (qua NVS COM5) và <b>ESP8266 Slave</b> (qua EEPROM COM8), đảm bảo 2 bo luôn cùng chung 1 kênh sóng (Channel).
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-weight:600">Tên WiFi (SSID)</label>
+          <input type="text" id="dual-ssid" placeholder="Nhập tên mạng WiFi (ví dụ: MyHome_WiFi)" style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#fff;font-size:13px">
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-weight:600">Mật khẩu WiFi (Password)</label>
+          <input type="password" id="dual-pass" placeholder="Nhập mật khẩu WiFi" style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#fff;font-size:13px">
+        </div>
+      </div>
+      <button class="btn-primary" id="btn-sync-wifi" onclick="syncDualWifi()">🚀 ĐỒNG BỘ & CÀI ĐẶT CHO CẢ 2 ESP</button>
+      <div id="sync-result" style="margin-top:12px;display:none;padding:12px;border-radius:8px;background:#0f172a;border:1px solid #334155;font-size:13px;line-height:1.6"></div>
+    </div>
   </div>
 </div>
 
 <div id="toast">Thông báo</div>
 
 <script>
-function showToast(msg){
+function showToast(msg, isErr=false){
   var t=document.getElementById('toast');
   t.innerText=msg;
+  t.style.borderColor=isErr?'var(--danger)':'var(--success)';
   t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'),2500);
+  setTimeout(()=>t.classList.remove('show'),3000);
 }
 
 function fmtTime(sec){
@@ -380,6 +402,46 @@ function sendCmd(c){
     .then(d=>{showToast('Đã gửi lệnh: '+c);fetchStatus();});
 }
 
+function syncDualWifi(){
+  var s=document.getElementById('dual-ssid').value.trim();
+  var p=document.getElementById('dual-pass').value.trim();
+  if(!s){showToast('Vui lòng nhập tên WiFi (SSID)!', true);return;}
+  var btn=document.getElementById('btn-sync-wifi');
+  var resBox=document.getElementById('sync-result');
+  btn.disabled=true;
+  btn.innerText='⏳ Đang đồng bộ cấu hình sang cả 2 ESP...';
+  resBox.style.display='block';
+  resBox.innerHTML='⏳ Đang cấu hình ESP8266 (COM8) và nạp NVS cho ESP32-S3 (COM5)...';
+
+  var body='ssid='+encodeURIComponent(s)+'&pass='+encodeURIComponent(p);
+  fetch('/api/wifi/dual-sync',{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:body
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    btn.disabled=false;
+    btn.innerText='🚀 ĐỒNG BỘ & CÀI ĐẶT CHO CẢ 2 ESP';
+    if(d.success){
+      showToast('Đồng bộ WiFi thành công!');
+      resBox.innerHTML='<b style="color:var(--success)">✅ ĐỒNG BỘ HOÀN TẤT!</b><br>'+
+                       '• <b>ESP8266 (COM8):</b> '+d.esp8266+'<br>'+
+                       '• <b>ESP32-S3 (COM5):</b> '+d.esp32+'<br>'+
+                       '<small style="color:var(--text-muted)">Cả 2 thiết bị sẽ tự động kết nối và khớp chung kênh WiFi để liên lạc ESP-NOW.</small>';
+    }else{
+      showToast('Đồng bộ thất bại!', true);
+      resBox.innerHTML='<b style="color:var(--danger)">❌ LỖI:</b> '+(d.error||'Không xác định');
+    }
+  })
+  .catch(e=>{
+    btn.disabled=false;
+    btn.innerText='🚀 ĐỒNG BỘ & CÀI ĐẶT CHO CẢ 2 ESP';
+    showToast('Lỗi kết nối máy chủ!', true);
+    resBox.innerHTML='<b style="color:var(--danger)">❌ LỖI:</b> Không thể kết nối tới máy chủ Web.';
+  });
+}
+
 setInterval(fetchStatus, 1000);
 fetchStatus();
 </script>
@@ -435,6 +497,62 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"success":true}')
+        elif url.path == '/api/wifi/dual-sync':
+            content_len = int(self.headers.get('Content-Length', 0))
+            post_body = self.rfile.read(content_len).decode('utf-8')
+            params = parse_qs(post_body)
+            ssid = params.get('ssid', [''])[0]
+            password = params.get('pass', [''])[0]
+
+            if not ssid:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"success":false,"error":"Missing SSID"}')
+                return
+
+            esp8266_msg = ""
+            esp32_msg = ""
+            success = True
+
+            # 1. Update ESP8266 via Serial (COM8)
+            try:
+                cmd_w = f"w {ssid} {password}\n"
+                if send_serial(cmd_w):
+                    esp8266_msg = f"Đã lưu SSID '{ssid}' vào EEPROM và bắt đầu kết nối!"
+                else:
+                    esp8266_msg = "Không thể gửi qua Serial COM8 (Cổng bận hoặc chưa mở)"
+            except Exception as e:
+                esp8266_msg = f"Lỗi ESP8266: {str(e)}"
+
+            # 2. Update ESP32-S3 via NVS partition (COM5)
+            try:
+                scripts_dir = os.path.dirname(os.path.abspath(__file__))
+                if scripts_dir not in sys.path:
+                    sys.path.insert(0, scripts_dir)
+                import set_wifi_config
+                target_bin = os.path.join(scripts_dir, "..", "nvs_configured.bin")
+                target_bin = os.path.abspath(target_bin)
+                set_wifi_config.update_nvs_wifi(target_bin, ssid, password)
+
+                available_ports = [p.device for p in serial.tools.list_ports.comports()]
+                if 'COM5' in available_ports:
+                    set_wifi_config.flash_nvs(target_bin, port='COM5')
+                    esp32_msg = f"Đã nạp NVS WiFi ('{ssid}') vào ESP32-S3 qua cổng COM5 thành công!"
+                else:
+                    esp32_msg = f"Đã cập nhật file nvs_configured.bin ('{ssid}'), nhưng không tìm thấy cổng COM5 cắm máy."
+            except Exception as e:
+                esp32_msg = f"Lỗi nạp ESP32-S3: {str(e)}"
+
+            res_payload = {
+                "success": success,
+                "esp8266": esp8266_msg,
+                "esp32": esp32_msg
+            }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(res_payload, ensure_ascii=False).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -450,6 +568,7 @@ def run_server(port=HTTP_PORT):
     print(f"\n=======================================================")
     print(f" [WEB DASHBOARD] Started at: http://localhost:{port}")
     print(f" Connecting to ESP on {SERIAL_PORT} (DTR=False, RTS=False)...")
+    print(f" All-in-One WiFi Sync for ESP32-S3 and ESP8266 is ready!")
     print(f"=======================================================\n")
     try:
         server.serve_forever()

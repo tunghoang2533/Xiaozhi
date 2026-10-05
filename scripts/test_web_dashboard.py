@@ -1,6 +1,6 @@
 """
 Unit and Integration Test for Web Dashboard & ESP API
-Verifies HTTP endpoints, JSON structure, control commands, and serial bridging.
+Verifies HTTP endpoints, JSON structure, control commands, and all-in-one dual WiFi sync.
 """
 
 import sys
@@ -9,6 +9,7 @@ import json
 import threading
 import urllib.request
 import urllib.error
+from urllib.parse import urlencode
 
 # Import web_dashboard components
 import web_dashboard
@@ -37,6 +38,7 @@ def run_tests():
         assert "SMART DESK ASSISTANT" in html, "Page title/header missing"
         assert "ĐIỀU KHIỂN ĐÈN BÀN" in html, "Lamp control card missing"
         assert "CÔNG THÁI HỌC" in html, "Ergonomics card missing"
+        assert "ĐỒNG BỘ CẤU HÌNH WIFI CHO CẢ 2 ESP" in html, "Dual WiFi sync card missing"
     print("[PASSED] HTML Dashboard successfully served with 200 OK!")
     
     # Test 2: GET /api/status (JSON Telemetry)
@@ -91,6 +93,21 @@ def run_tests():
         data = json.loads(res.read().decode('utf-8'))
         assert data.get("success") is True
     print("[PASSED] Hardware serial command forwarding verified!")
+    
+    # Test 7: POST /api/wifi/dual-sync
+    print("\n--> [TEST 7] Testing POST /api/wifi/dual-sync (All-in-One Dual WiFi)...")
+    payload = urlencode({'ssid': 'MyDesk_WiFi', 'pass': '123456789'}).encode('utf-8')
+    req = urllib.request.Request(f"{base_url}/api/wifi/dual-sync", data=payload, method='POST')
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+    with urllib.request.urlopen(req, timeout=5) as res:
+        assert res.status == 200
+        data = json.loads(res.read().decode('utf-8'))
+        assert data.get("success") is True
+        assert "esp8266" in data
+        assert "esp32" in data
+        print(f"[DUAL-SYNC RECV] ESP8266: {data['esp8266'].encode('ascii', 'replace').decode('ascii')}")
+        print(f"[DUAL-SYNC RECV] ESP32: {data['esp32'].encode('ascii', 'replace').decode('ascii')}")
+    print("[PASSED] Dual WiFi synchronization endpoint executed successfully!")
     
     print("\n==================================================")
     print(" ALL WEB DASHBOARD TESTS COMPLETED SUCCESSFULLY!")
